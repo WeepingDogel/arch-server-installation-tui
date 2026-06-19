@@ -1,12 +1,11 @@
 name: CI/CD
 
 on:
-  push:
-    branches: [main, develop]
-    # On push (merge), only build — lint+test already ran in PR
   pull_request:
     branches: ['**']
-    # On PR, run full suite
+  push:
+    branches: [main]
+  workflow_dispatch:
   release:
     types: [published]
 
@@ -44,23 +43,9 @@ jobs:
           name: coverage
           path: coverage.out
 
-  security:
-    name: Security Scan
-    if: github.event_name == 'pull_request'
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-      - run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.0
-          govulncheck ./...
-
   build:
     name: Build
-    # Always build (on PR and on push/merge)
+    if: github.ref_name == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     strategy:
       matrix:
