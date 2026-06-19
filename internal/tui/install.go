@@ -17,7 +17,6 @@ type InstallModel struct {
 	config       *model.Config
 	spinnerFrame int
 	completed    bool
-	currentStep  int
 	installer    *installer.Installer
 	logs         []string
 	currentStage string

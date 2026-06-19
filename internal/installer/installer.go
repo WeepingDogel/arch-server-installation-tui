@@ -152,8 +152,8 @@ func streamExec(logCh chan<- string, name string, args ...string) error {
 	}()
 
 	// Wait for stderr/stdout to finish
-	io.Copy(io.Discard, stderr)
-	io.Copy(io.Discard, stdout)
+	_, _ = io.Copy(io.Discard, stderr)
+	_, _ = io.Copy(io.Discard, stdout)
 
 	return cmd.Wait()
 }
