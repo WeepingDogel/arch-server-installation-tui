@@ -12,6 +12,7 @@ type PackagesModel struct {
 	cursor   int
 	packages []pkgOption
 	Next     bool
+	GoBack   bool
 }
 
 type pkgOption struct {

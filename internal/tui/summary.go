@@ -13,6 +13,7 @@ import (
 type SummaryModel struct {
 	config    *model.Config
 	Next      bool
+	GoBack    bool
 	Confirmed bool
 	cursor    int // 0 = Confirm, 1 = Back
 }

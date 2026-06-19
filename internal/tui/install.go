@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -11,33 +12,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// InstallModel shows the installation progress with log viewer.
+// InstallModel shows the installation progress with live streaming logs.
 type InstallModel struct {
 	config       *model.Config
 	spinnerFrame int
 	completed    bool
 	currentStep  int
 	installer    *installer.Installer
-	showLogs     bool
 	logs         []string
-}
-
-var installSteps = []string{
-	"Partitioning disk...",
-	"Formatting filesystems...",
-	"Mounting partitions...",
-	"Installing base system...",
-	"Generating fstab...",
-	"Configuring timezone & locale...",
-	"Setting up hostname...",
-	"Configuring network...",
-	"Setting root password...",
-	"Creating user account...",
-	"Installing bootloader...",
-	"Configuring SSH...",
-	"Installing additional packages...",
-	"Finalizing installation...",
-	"Installation complete!",
+	currentStage string
+	progressCh   chan installer.ProgressUpdate
 }
 
 // NewInstallModel creates the installation progress screen.
@@ -46,40 +30,40 @@ func NewInstallModel(config *model.Config) InstallModel {
 		config:       config,
 		spinnerFrame: 0,
 		installer:    installer.New(config),
-		logs:         make([]string, 0, 100),
+		logs:         make([]string, 0, 500),
 	}
 }
 
 func (m InstallModel) Init() tea.Cmd { return nil }
 
-// StartInstall returns the command to begin installation.
+// StartInstall begins installation and streams progress to the TUI.
 func (m InstallModel) StartInstall() tea.Cmd {
 	m.config.InstallStarted = true
-	m.logs = append(m.logs, "Installation started...")
-	return func() tea.Msg {
-		progressCh := make(chan installer.ProgressUpdate)
-		go m.installer.Install(progressCh)
+	m.logs = append(m.logs, "◆ Installation started")
+	m.progressCh = make(chan installer.ProgressUpdate)
+	go m.installer.Install(m.progressCh)
+	return m.pollNext()
+}
 
-		// Read first progress message
-		update, ok := <-progressCh
+// pollNext reads one message from the progress channel.
+func (m InstallModel) pollNext() tea.Cmd {
+	return func() tea.Msg {
+		p, ok := <-m.progressCh
 		if !ok {
+			// Channel closed - installation finished
 			return installProgressMsg{
 				Percent: 100,
 				Message: "Installation complete!",
 				Done:    true,
 			}
 		}
-		go func() {
-			for p := range progressCh {
-				_ = p
-			}
-		}()
 		return installProgressMsg{
-			Percent:   update.Percent,
-			Message:   update.Message,
-			LogOutput: update.Message,
-			Done:      update.Done,
-			Err:       update.Err,
+			Percent:   p.Percent,
+			Message:   p.Message,
+			LogOutput: p.LogOutput,
+			Stage:     p.Stage,
+			Done:      p.Done,
+			Err:       p.Err,
 		}
 	}
 }
@@ -87,70 +71,70 @@ func (m InstallModel) StartInstall() tea.Cmd {
 func (m InstallModel) Update(msg tea.Msg) (InstallModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case installProgressMsg:
-		m.currentStep++
 		m.spinnerFrame = (m.spinnerFrame + 1) % 10
 		m.config.ProgressPercent = msg.Percent
 		m.config.ProgressMessage = msg.Message
 
+		if msg.Stage != "" {
+			m.currentStage = msg.Stage
+		}
 		if msg.LogOutput != "" {
-			m.logs = append(m.logs, msg.LogOutput)
+			line := msg.LogOutput
+			if len(line) > 200 {
+				line = line[:200] + "..."
+			}
+			m.logs = append(m.logs, line)
+			if len(m.logs) > 500 {
+				m.logs = m.logs[len(m.logs)-500:]
+			}
 		}
 
 		if msg.Done {
 			m.completed = true
 			m.config.InstallComplete = true
-			m.logs = append(m.logs, "Installation complete!")
+			m.logs = append(m.logs, "")
+			m.logs = append(m.logs, "✓ Installation complete!")
+			m.logs = append(m.logs, "")
+			m.logs = append(m.logs, "Remove the installation media and press ENTER to reboot.")
 			return m, nil
 		}
 
-		// Schedule next progress poll
+		// Schedule next poll
 		return m, func() tea.Msg {
-			time.Sleep(600 * time.Millisecond)
-			return installProgressMsg{
-				Percent:   m.config.ProgressPercent + 100.0/float64(len(installSteps)),
-				Message:   fmt.Sprintf("Installing... (%.0f%%)", m.config.ProgressPercent),
-				LogOutput: "",
-				Done:      m.config.ProgressPercent >= 99,
-			}
+			time.Sleep(50 * time.Millisecond)
+			return pollMsg{}
 		}
+
+	case pollMsg:
+		return m, m.pollNext()
 
 	case tea.KeyMsg:
-		if m.completed {
-			switch msg.String() {
-			case "enter", "q", "ctrl+c":
-				return m, tea.Quit
-			}
+		if m.completed && (msg.String() == "enter" || msg.String() == "r") {
+			_ = exec.Command("reboot").Start()
+			return m, tea.Quit
 		}
-		// Toggle log view with 'l'
-		if msg.String() == "l" {
-			m.showLogs = !m.showLogs
-			return m, nil
+		if m.completed && (msg.String() == "q" || msg.String() == "ctrl+c") {
+			return m, tea.Quit
 		}
 	}
 
 	return m, nil
 }
 
+type pollMsg struct{}
+
 func (m InstallModel) View() string {
 	if m.completed {
 		return m.completedView()
-	}
-	if m.showLogs {
-		return m.logView()
 	}
 	return m.inProgressView()
 }
 
 func (m InstallModel) inProgressView() string {
-	logo := MiniArchLogo()
-	title := TitleStyle.Render("Installing Arch Linux Server...")
+	// Progress bar at top
+	stepIndicator := StepIndicator(min(int(m.config.ProgressPercent/100.0*13)+1, 13), TotalSteps)
 
-	spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	spinner := spinnerFrames[m.spinnerFrame]
-
-	spinnerView := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(spinner + " " + m.config.ProgressMessage)
-
-	barWidth := 50
+	barWidth := 40
 	filled := int(m.config.ProgressPercent / 100.0 * float64(barWidth))
 	bar := ""
 	for i := 0; i < barWidth; i++ {
@@ -163,48 +147,49 @@ func (m InstallModel) inProgressView() string {
 	bar = lipgloss.NewStyle().Foreground(ColorPrimary).Render(bar)
 	percentText := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render(fmt.Sprintf("%.0f%%", m.config.ProgressPercent))
 
-	logHint := HelpStyle.Render("Press 'l' to view full logs")
+	// Current stage display
+	stageText := lipgloss.NewStyle().Foreground(ColorWhite).Render("▶ " + m.config.ProgressMessage)
 
-	content := lipgloss.JoinVertical(
-		lipgloss.Center,
-		logo,
+	progressBox := lipgloss.JoinVertical(
+		lipgloss.Left,
+		stepIndicator,
 		"",
-		title,
+		bar,
+		percentText,
 		"",
-		BoxStyle.Render(lipgloss.JoinVertical(lipgloss.Center, spinnerView, "", bar, "", percentText)),
-		"",
-		logHint,
+		stageText,
 	)
 
-	return Screen(TotalSteps, content, "Installation in progress...", 1)
-}
-
-// logView shows the full installation log output.
-func (m InstallModel) logView() string {
-	title := TitleStyle.Render("Installation Logs")
-	subtitle := SubtitleStyle.Render("Press 'l' to return to progress view. ↑/↓ to scroll.")
-
+	// Live log view (last 15 lines)
 	var logContent string
-	// Show last 20 log lines
 	start := 0
-	if len(m.logs) > 20 {
-		start = len(m.logs) - 20
+	if len(m.logs) > 15 {
+		start = len(m.logs) - 15
 	}
 	for i, line := range m.logs[start:] {
-		prefix := lipgloss.NewStyle().Foreground(ColorGray).Render(fmt.Sprintf("%3d ", start+i+1))
-		logContent += prefix + line + "\n"
+		num := start + i + 1
+		// Colorize based on content
+		style := lipgloss.NewStyle().Foreground(ColorGray)
+		if strings.Contains(line, "Error") || strings.Contains(line, "FAILED") {
+			style = ErrorStyle
+		} else if strings.Contains(line, "✓") || strings.Contains(line, "done") {
+			style = SuccessStyle
+		} else if strings.Contains(line, "◆") || strings.Contains(line, "▶") {
+			style = lipgloss.NewStyle().Foreground(ColorPrimary)
+		}
+		logContent += style.Render(fmt.Sprintf("%3d ", num)) + line + "\n"
 	}
 
-	if len(m.logs) == 0 {
-		logContent = HelpStyle.Render("Waiting for installation output...")
+	if m.currentStage != "" {
+		logContent = lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("["+m.currentStage+"]\n") + logContent
 	}
 
-	logBox := BoxStyle.Render(strings.TrimRight(logContent, "\n"))
+	logBox := BoxStyle.MaxWidth(60).Render(logContent)
 
 	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		subtitle,
+		lipgloss.Top,
+		"",
+		progressBox,
 		"",
 		logBox,
 	)
@@ -212,30 +197,38 @@ func (m InstallModel) logView() string {
 
 func (m InstallModel) completedView() string {
 	logo := ArchLogo()
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorSuccess).
-		Render("✓ Installation Complete!")
-	subtitle := SubtitleStyle.Render("Arch Linux Server has been successfully installed.")
+	title := lipgloss.NewStyle().Bold(true).Foreground(ColorSuccess).Render("✓ Installation Complete!")
+	subtitle := SubtitleStyle.Render("Arch Linux Server is ready.")
 
-	summaryInfo := BoxStyle.Render(
+	summaryInfo := BoxStyle.MaxWidth(56).Render(
 		lipgloss.JoinVertical(
 			lipgloss.Left,
-			fmt.Sprintf("Disk: %s", m.config.DiskDevice),
-			fmt.Sprintf("Partition: %s / %s", m.config.PartitionScheme, m.config.PartitionMode),
-			fmt.Sprintf("Filesystem: %s", m.config.FilesystemType),
-			fmt.Sprintf("Bootloader: %s (%s)", m.config.BootloaderType, bootModeStr(m.config.UEFIMode)),
 			fmt.Sprintf("Hostname: %s", m.config.Hostname),
-			fmt.Sprintf("SSH: Port %d, Root Login: %s", m.config.SSHPort, boolStr(m.config.AllowRootLogin, "Allowed", "Denied")),
+			fmt.Sprintf("Disk: %s (%s)", m.config.DiskDevice, m.config.DiskSize),
+			fmt.Sprintf("Boot: %s / %s", m.config.PartitionScheme, m.config.BootloaderType),
+			fmt.Sprintf("Users: root + %s", ifElse(m.config.CreateUser, m.config.UserName, "(none)")),
+			fmt.Sprintf("SSH: Port %d", m.config.SSHPort),
 			"",
-			SubtitleStyle.Render("Reboot to start your new Arch Linux server!"),
+			InfoBox("Remove the installation media before rebooting!"),
 		),
 	)
 
-	quitHint := lipgloss.NewStyle().
-		Foreground(ColorGray).
-		Italic(true).
-		Render("Press ENTER, Q or Ctrl+C to quit")
+	// Reboot button
+	rebootBtn := lipgloss.NewStyle().
+		Background(ColorSuccess).
+		Foreground(ColorWhite).
+		Bold(true).
+		Padding(0, 6).
+		Render("⟳  Reboot Now")
+
+	quitBtn := lipgloss.NewStyle().
+		Background(ColorGray).
+		Foreground(ColorWhite).
+		Padding(0, 6).
+		Render("Quit")
+
+	buttons := lipgloss.JoinHorizontal(lipgloss.Center, rebootBtn, "  ", quitBtn)
+	help := HelpStyle.Render("ENTER=Reboot  Q=Quit  Ctrl+C=Quit")
 
 	return lipgloss.JoinVertical(
 		lipgloss.Center,
@@ -248,6 +241,8 @@ func (m InstallModel) completedView() string {
 		"",
 		summaryInfo,
 		"",
-		quitHint,
+		buttons,
+		"",
+		help,
 	)
 }

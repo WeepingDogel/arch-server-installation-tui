@@ -12,6 +12,7 @@ type FilesystemModel struct {
 	cursor  int
 	fsTypes []fsOption
 	Next    bool
+	GoBack  bool
 }
 
 type fsOption struct {

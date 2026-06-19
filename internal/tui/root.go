@@ -8,13 +8,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// RootModel is the top-level Bubble Tea model that manages navigation
-// between all installation wizard steps.
+// RootModel is the top-level Bubble Tea model that manages navigation.
 type RootModel struct {
 	config *model.Config
-	step   int // 1-based step number
+	step   int
 
-	// Sub-models for each step
 	welcome    WelcomeModel
 	keyboard   KeyboardModel
 	network    NetworkModel
@@ -29,12 +27,9 @@ type RootModel struct {
 	summary    SummaryModel
 	install    InstallModel
 
-	// Window size
 	width  int
 	height int
-
-	navFocus int // 0=Back button, 1=Next button
-	err      error
+	err    error
 }
 
 // New creates the root model with default configuration.
@@ -59,12 +54,8 @@ func New() *RootModel {
 	}
 }
 
-// Init initializes the Bubble Tea program.
-func (m *RootModel) Init() tea.Cmd {
-	return tea.EnterAltScreen
-}
+func (m *RootModel) Init() tea.Cmd { return tea.EnterAltScreen }
 
-// Update handles messages and key events.
 func (m *RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -80,92 +71,15 @@ func (m *RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 
-		case "left":
-			if m.step > 1 {
-				m.navFocus = 0
-			}
-			return m, nil
-
-		case "right":
-			if m.step < TotalSteps {
-				m.navFocus = 1
-			}
-			return m, nil
-
-		case "esc":
-			if m.step > 1 {
-				m.step--
-				m.navFocus = 1
-			}
-			return m, nil
 		}
 	}
 
-	// Delegate to current step's model first (so it can save inputs)
 	var cmd tea.Cmd
 	switch m.step {
 	case 1:
 		newModel, c := m.welcome.Update(msg)
 		m.welcome = newModel
 		cmd = c
-	case 2:
-		newModel, c := m.keyboard.Update(msg)
-		m.keyboard = newModel
-		cmd = c
-	case 3:
-		newModel, c := m.network.Update(msg)
-		m.network = newModel
-		cmd = c
-	case 4:
-		newModel, c := m.mirror.Update(msg)
-		m.mirror = newModel
-		cmd = c
-	case 5:
-		newModel, c := m.disk.Update(msg)
-		m.disk = newModel
-		cmd = c
-	case 6:
-		newModel, c := m.filesystem.Update(msg)
-		m.filesystem = newModel
-		cmd = c
-	case 7:
-		newModel, c := m.bootloader.Update(msg)
-		m.bootloader = newModel
-		cmd = c
-	case 8:
-		newModel, c := m.timezone.Update(msg)
-		m.timezone = newModel
-		cmd = c
-	case 9:
-		newModel, c := m.users.Update(msg)
-		m.users = newModel
-		cmd = c
-	case 10:
-		newModel, c := m.ssh.Update(msg)
-		m.ssh = newModel
-		cmd = c
-	case 11:
-		newModel, c := m.packages.Update(msg)
-		m.packages = newModel
-		cmd = c
-	case 12:
-		newModel, c := m.summary.Update(msg)
-		m.summary = newModel
-		cmd = c
-	case 13:
-		newModel, c := m.install.Update(msg)
-		m.install = newModel
-		cmd = c
-	}
-
-	// After sub-model processed the message, check if it wants to advance
-	// and validate the step before advancing
-	if m.err != nil {
-		m.err = nil // clear previous error on new attempt
-	}
-
-	switch m.step {
-	case 1:
 		if m.welcome.Next {
 			m.welcome.Next = false
 			if m.step < TotalSteps {
@@ -173,101 +87,136 @@ func (m *RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case 2:
-		if m.keyboard.Next {
-			m.keyboard.Next = false
-			if m.step < TotalSteps {
-				m.step++
+		newModel, c := m.keyboard.Update(msg)
+		m.keyboard = newModel
+		cmd = c
+		if m.keyboard.Next || m.keyboard.GoBack {
+			if m.keyboard.GoBack {
+				m.keyboard.GoBack = false
+				m.step--
+			} else {
+				m.keyboard.Next = false
+				if m.step < TotalSteps {
+					m.step++
+				}
 			}
 		}
 	case 3:
-		if m.network.Next {
-			m.network.Next = false
-			if err := m.validateStep(); err != nil {
-				m.err = err
-			} else if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.network.Update(msg)
+		m.network = newModel
+		cmd = c
+		if m.network.Next || m.network.GoBack {
+			m.handleNav(&m.network.Next, &m.network.GoBack)
+			return m, cmd
 		}
 	case 4:
-		if m.mirror.Next {
-			m.mirror.Next = false
-			if err := m.validateStep(); err != nil {
-				m.err = err
-			} else if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.mirror.Update(msg)
+		m.mirror = newModel
+		cmd = c
+		if m.mirror.Next || m.mirror.GoBack {
+			m.handleNav(&m.mirror.Next, &m.mirror.GoBack)
+			return m, cmd
 		}
 	case 5:
-		if m.disk.Next {
-			m.disk.Next = false
-			if err := m.validateStep(); err != nil {
-				m.err = err
-			} else if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.disk.Update(msg)
+		m.disk = newModel
+		cmd = c
+		if m.disk.Next || m.disk.GoBack {
+			m.handleNav(&m.disk.Next, &m.disk.GoBack)
+			return m, cmd
 		}
 	case 6:
-		if m.filesystem.Next {
-			m.filesystem.Next = false
-			if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.filesystem.Update(msg)
+		m.filesystem = newModel
+		cmd = c
+		if m.filesystem.Next || m.filesystem.GoBack {
+			m.handleNav(&m.filesystem.Next, &m.filesystem.GoBack)
+			return m, cmd
 		}
 	case 7:
-		if m.bootloader.Next {
-			m.bootloader.Next = false
-			if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.bootloader.Update(msg)
+		m.bootloader = newModel
+		cmd = c
+		if m.bootloader.Next || m.bootloader.GoBack {
+			m.handleNav(&m.bootloader.Next, &m.bootloader.GoBack)
+			return m, cmd
 		}
 	case 8:
-		if m.timezone.Next {
-			m.timezone.Next = false
-			if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.timezone.Update(msg)
+		m.timezone = newModel
+		cmd = c
+		if m.timezone.Next || m.timezone.GoBack {
+			m.handleNav(&m.timezone.Next, &m.timezone.GoBack)
+			return m, cmd
 		}
 	case 9:
-		if m.users.Next {
-			m.users.Next = false
-			if err := m.validateStep(); err != nil {
-				m.err = err
-			} else if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.users.Update(msg)
+		m.users = newModel
+		cmd = c
+		if m.users.Next || m.users.GoBack {
+			m.handleNav(&m.users.Next, &m.users.GoBack)
+			return m, cmd
 		}
 	case 10:
-		if m.ssh.Next {
-			m.ssh.Next = false
-			if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.ssh.Update(msg)
+		m.ssh = newModel
+		cmd = c
+		if m.ssh.Next || m.ssh.GoBack {
+			m.handleNav(&m.ssh.Next, &m.ssh.GoBack)
+			return m, cmd
 		}
 	case 11:
-		if m.packages.Next {
-			m.packages.Next = false
-			if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.packages.Update(msg)
+		m.packages = newModel
+		cmd = c
+		if m.packages.Next || m.packages.GoBack {
+			m.handleNav(&m.packages.Next, &m.packages.GoBack)
+			return m, cmd
 		}
 	case 12:
-		if m.summary.Next {
-			m.summary.Next = false
-			if m.step < TotalSteps {
-				m.step++
-			}
+		newModel, c := m.summary.Update(msg)
+		m.summary = newModel
+		cmd = c
+		if m.summary.Next || m.summary.GoBack {
+			m.handleNav(&m.summary.Next, &m.summary.GoBack)
+			return m, cmd
 		}
 		if m.summary.Confirmed {
 			m.summary.Confirmed = false
 			m.step = TotalSteps
 			return m, m.install.StartInstall()
 		}
+	case 13:
+		newModel, c := m.install.Update(msg)
+		m.install = newModel
+		cmd = c
 	}
 
 	return m, cmd
 }
 
-// View renders the current step's UI.
+// handleNav processes GoBack/Next from sub-models with validation.
+func (m *RootModel) handleNav(next, back *bool) {
+	if *back {
+		*back = false
+		if m.step > 1 {
+			m.step--
+		}
+		return
+	}
+	if *next {
+		*next = false
+		if err := m.validateStep(); err != nil {
+			m.err = err
+			return
+		}
+		m.err = nil
+		if m.step < TotalSteps {
+			m.step++
+		}
+	}
+}
+
 func (m *RootModel) View() string {
 	var content string
 	switch m.step {
@@ -304,7 +253,7 @@ func (m *RootModel) View() string {
 		errMsg = ErrorBox(m.err.Error())
 	}
 
-	screen := Screen(m.step, content, SimpleFooter(), m.navFocus)
+	screen := Screen(m.step, content, SimpleFooter())
 
 	if errMsg != "" {
 		screen = lipgloss.JoinVertical(lipgloss.Top, screen, "", errMsg)
@@ -313,7 +262,6 @@ func (m *RootModel) View() string {
 	return fmt.Sprintf("\n%s\n", screen)
 }
 
-// validateStep validates the current step's input before allowing navigation.
 func (m *RootModel) validateStep() error {
 	switch m.step {
 	case 3:
@@ -359,6 +307,7 @@ type installProgressMsg struct {
 	Percent   float64
 	Message   string
 	LogOutput string
+	Stage     string
 	Done      bool
 	Err       error
 }
