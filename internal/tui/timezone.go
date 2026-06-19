@@ -14,12 +14,18 @@ const tzViewportHeight = 8
 type TimezoneModel struct {
 	config  *model.Config
 	cursor  int
+	scroll  int
 	regions []string
 	locales []string
 	Next    bool
 	GoBack  bool
-	scroll  int // scroll offset for low-resolution
 }
+
+func (m TimezoneModel) totalItems() int {
+	return len(m.regions) + len(m.locales) + 2
+}
+
+func (m TimezoneModel) viewHeight() int { return tzViewportHeight }
 
 // NewTimezoneModel creates the timezone configuration screen.
 func NewTimezoneModel(config *model.Config) TimezoneModel {
@@ -53,7 +59,7 @@ func toggleLocale(locales []string, locale string) []string {
 func (m TimezoneModel) Init() tea.Cmd { return nil }
 
 func (m TimezoneModel) Update(msg tea.Msg) (TimezoneModel, tea.Cmd) {
-	total := len(m.regions) + len(m.locales)
+	total := m.totalItems()
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -67,27 +73,28 @@ func (m TimezoneModel) Update(msg tea.Msg) (TimezoneModel, tea.Cmd) {
 		case "down", "j":
 			if m.cursor < total-1 {
 				m.cursor++
-				if m.cursor >= m.scroll+tzViewportHeight {
+				if m.cursor >= m.scroll+m.viewHeight() {
 					m.scroll++
 				}
 			}
 		case " ":
-			if m.cursor >= len(m.regions) {
+			contentLen := len(m.regions) + len(m.locales)
+			if m.cursor >= len(m.regions) && m.cursor < contentLen {
 				localeIdx := m.cursor - len(m.regions)
 				if localeIdx < len(m.locales) {
 					m.config.Locales = toggleLocale(m.config.Locales, m.locales[localeIdx])
 				}
 			}
 		case "enter":
-			if m.cursor < len(m.regions) {
+			if m.cursor == total-2 {
+				if m.config.TimezoneRegion == "" && len(m.regions) > 0 {
+					m.config.TimezoneRegion = m.regions[0]
+				}
+				m.Next = true
+			} else if m.cursor == total-1 {
+				m.GoBack = true
+			} else if m.cursor < len(m.regions) {
 				m.config.TimezoneRegion = m.regions[m.cursor]
-			}
-			if m.config.TimezoneRegion != "" {
-				m.Next = true
-			}
-		case "tab":
-			if m.config.TimezoneRegion != "" {
-				m.Next = true
 			}
 		}
 	}
@@ -96,71 +103,43 @@ func (m TimezoneModel) Update(msg tea.Msg) (TimezoneModel, tea.Cmd) {
 
 func (m TimezoneModel) View() string {
 	title := TitleStyle.Render("Timezone & Locale")
-	subtitle := SubtitleStyle.Render("Select timezone. SPACE to toggle multiple locales, ENTER to confirm.")
+	subtitle := SubtitleStyle.Render("SPACE to toggle locales, ENTER on [Next] to confirm.")
 
-	total := len(m.regions) + len(m.locales)
-
-	// Scroll indicator
-	visibleEnd := m.scroll + tzViewportHeight
-	if visibleEnd > total {
-		visibleEnd = total
-	}
-	scrollInfo := ""
-	if total > tzViewportHeight {
-		scrollInfo = lipgloss.NewStyle().Foreground(ColorGray).Render(
-			fmt.Sprintf("  [%d-%d of %d]  ▼", m.scroll+1, visibleEnd, total),
-		)
-	}
-
-	var items string
-	// Build all items first, then pick the visible window
 	var allLines []string
-
-	// Timezone section header
 	allLines = append(allLines, DividerStyle.Render(" Timezone "))
-
 	for i, region := range m.regions {
-		style := ListItemStyle
-		prefix := "  "
-		if i == m.cursor {
-			style = ListItemSelectedStyle
-			prefix = "▶ "
-		}
-		selected := ""
-		if m.config.TimezoneRegion == region {
-			selected = SuccessStyle.Render(" ✓")
-		}
-		allLines = append(allLines, style.Render(prefix+region+selected))
+		sel := m.config.TimezoneRegion == region
+		allLines = append(allLines, ListItem(i == m.cursor, sel, RadioButton(sel, region)))
 	}
-
-	// Locale section header
 	allLines = append(allLines, "", DividerStyle.Render(" Locales (SPACE to toggle) "))
-
 	for i, locale := range m.locales {
 		idx := i + len(m.regions)
-		style := ListItemStyle
-		prefix := "  "
-		if idx == m.cursor {
-			style = ListItemSelectedStyle
-			prefix = "▶ "
+		checked := localeSelected(m.config.Locales, locale)
+		prefix := "☐ "
+		if checked {
+			prefix = "☑ "
 		}
-		checked := ""
-		if localeSelected(m.config.Locales, locale) {
-			checked = SuccessStyle.Render("☑")
-		}
-		allLines = append(allLines, style.Render(prefix+locale+checked))
+		allLines = append(allLines, ListItem(idx == m.cursor, false, prefix+locale))
 	}
+	allLines = append(allLines, "")
+	allLines = append(allLines, renderNavButtons(m.cursor, len(m.regions)+len(m.locales), len(m.regions)+len(m.locales)+1))
 
-	// Render only the visible window
-	end := m.scroll + tzViewportHeight
-	if end > len(allLines) {
-		end = len(allLines)
+	visibleEnd := m.scroll + m.viewHeight()
+	if visibleEnd > len(allLines) {
+		visibleEnd = len(allLines)
 	}
-	for i := m.scroll; i < end; i++ {
+	var items string
+	for i := m.scroll; i < visibleEnd; i++ {
 		items += allLines[i] + "\n"
 	}
 
-	// Selection summary
+	scrollInfo := ""
+	if len(allLines) > m.viewHeight() {
+		scrollInfo = lipgloss.NewStyle().Foreground(ColorGray).Render(
+			fmt.Sprintf("  [%d-%d of %d]  ▼", m.scroll+1, visibleEnd, len(allLines)),
+		)
+	}
+
 	summary := ""
 	if len(m.config.Locales) > 0 {
 		locStr := "Selected: "
@@ -173,15 +152,5 @@ func (m TimezoneModel) View() string {
 		summary = lipgloss.NewStyle().Foreground(ColorSuccess).Render(locStr)
 	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		subtitle,
-		"",
-		scrollInfo,
-		"",
-		BoxStyle.Render(items),
-		"",
-		summary,
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", scrollInfo, "", BoxStyle.MaxWidth(60).Render(items), "", summary)
 }

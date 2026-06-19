@@ -21,6 +21,10 @@ type pkgOption struct {
 	field   string
 }
 
+func (m PackagesModel) totalItems() int {
+	return len(m.packages) + 2
+}
+
 // NewPackagesModel creates the package selection screen.
 func NewPackagesModel(config *model.Config) PackagesModel {
 	return PackagesModel{
@@ -32,15 +36,15 @@ func NewPackagesModel(config *model.Config) PackagesModel {
 			{name: "Kernel: linux-zen", enabled: config.KernelType == "linux-zen", field: "kernel_zen"},
 			{name: "Kernel: linux-hardened", enabled: config.KernelType == "linux-hardened", field: "kernel_hardened"},
 			{name: "base-devel (build tools)", enabled: config.InstallBaseDev, field: "base_devel"},
-			{name: "Docker (container runtime)", enabled: config.InstallDocker, field: "docker"},
-			{name: "Nginx (web server)", enabled: config.InstallNginx, field: "nginx"},
-			{name: "PostgreSQL (database)", enabled: config.InstallPostgres, field: "postgres"},
-			{name: "MariaDB (database)", enabled: config.InstallMariaDB, field: "mariadb"},
-			{name: "Redis (caching)", enabled: config.InstallRedis, field: "redis"},
-			{name: "Fail2ban (security)", enabled: config.InstallFail2ban, field: "fail2ban"},
-			{name: "UFW (firewall)", enabled: config.InstallUfw, field: "ufw"},
-			{name: "Git (version control)", enabled: config.InstallGit, field: "git"},
-			{name: "Vim (editor)", enabled: config.InstallVim, field: "vim"},
+			{name: "Docker", enabled: config.InstallDocker, field: "docker"},
+			{name: "Nginx", enabled: config.InstallNginx, field: "nginx"},
+			{name: "PostgreSQL", enabled: config.InstallPostgres, field: "postgres"},
+			{name: "MariaDB", enabled: config.InstallMariaDB, field: "mariadb"},
+			{name: "Redis", enabled: config.InstallRedis, field: "redis"},
+			{name: "Fail2ban", enabled: config.InstallFail2ban, field: "fail2ban"},
+			{name: "UFW", enabled: config.InstallUfw, field: "ufw"},
+			{name: "Git", enabled: config.InstallGit, field: "git"},
+			{name: "Vim", enabled: config.InstallVim, field: "vim"},
 		},
 	}
 }
@@ -56,16 +60,23 @@ func (m PackagesModel) Update(msg tea.Msg) (PackagesModel, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < len(m.packages)-1 {
+			if m.cursor < m.totalItems()-1 {
 				m.cursor++
 			}
 		case " ":
-			pkg := &m.packages[m.cursor]
-			pkg.enabled = !pkg.enabled
-			m.applyToggle(pkg)
+			if m.cursor < len(m.packages) {
+				pkg := &m.packages[m.cursor]
+				pkg.enabled = !pkg.enabled
+				m.applyToggle(pkg)
+			}
 		case "enter":
-			m.applyAll()
-			m.Next = true
+			total := m.totalItems()
+			if m.cursor == total-2 {
+				m.applyAll()
+				m.Next = true
+			} else if m.cursor == total-1 {
+				m.GoBack = true
+			}
 		}
 	}
 	return m, nil
@@ -112,28 +123,13 @@ func (m *PackagesModel) applyAll() {
 
 func (m PackagesModel) View() string {
 	title := TitleStyle.Render("Package Selection")
-	subtitle := SubtitleStyle.Render("Select packages to install. SPACE to toggle, ENTER to continue.")
+	subtitle := SubtitleStyle.Render("SPACE to toggle, ENTER on [Next] to confirm.")
 
 	var items string
-	currentCategory := ""
 	for i, pkg := range m.packages {
-		cat := ""
-		switch {
-		case i < 4:
-			cat = " Kernel "
-		case i == 4:
-			cat = " Development "
-		case i >= 5 && i <= 10:
-			cat = " Server Packages "
-		default:
-			cat = " Utilities "
-		}
-		if cat != currentCategory {
-			currentCategory = cat
-			items += "\n" + DividerStyle.Render(cat) + "\n\n"
-		}
 		items += ListItem(i == m.cursor, false, Checkbox(pkg.enabled, pkg.name)) + "\n"
 	}
+	items += "\n" + renderNavButtons(m.cursor, len(m.packages), len(m.packages)+1)
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", BoxStyle.Render(items))
 }

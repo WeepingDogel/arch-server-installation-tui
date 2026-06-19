@@ -9,31 +9,35 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// NetworkModel handles network configuration with NIC detection.
+// NetworkModel handles network configuration.
 type NetworkModel struct {
 	config      *model.Config
 	Next        bool
 	GoBack      bool
-	focusIndex  int
+	cursor      int // unified cursor: 0=inputs, last 2 = [Next] [Back]
 	dhcpToggle  bool
 	inputs      []textinput.Model
 	showStatic  bool
-	interfaces  []string // detected network interfaces
+	interfaces  []string
 	ifaceCursor int
 }
 
-// detectNICs reads /sys/class/net for real network interfaces.
+func (m NetworkModel) totalItems() int {
+	if m.showStatic {
+		return len(m.inputs) + 2 // inputs + [Next] [Back]
+	}
+	return 1 + 2 // hostname + [Next] [Back]
+}
+
 func detectNICs() []string {
 	entries, err := os.ReadDir("/sys/class/net")
 	if err != nil {
-		// Fallback
 		return []string{"eth0", "enp0s3", "wlan0"}
 	}
 	var ifaces []string
 	for _, e := range entries {
-		name := e.Name()
-		if name != "lo" {
-			ifaces = append(ifaces, name)
+		if e.Name() != "lo" {
+			ifaces = append(ifaces, e.Name())
 		}
 	}
 	if len(ifaces) == 0 {
@@ -42,7 +46,7 @@ func detectNICs() []string {
 	return ifaces
 }
 
-// NewNetworkModel creates the network configuration screen with detected NICs.
+// NewNetworkModel creates the network configuration screen.
 func NewNetworkModel(config *model.Config) NetworkModel {
 	ifaces := detectNICs()
 	m := NetworkModel{
@@ -52,119 +56,84 @@ func NewNetworkModel(config *model.Config) NetworkModel {
 		ifaceCursor: 0,
 		inputs:      make([]textinput.Model, 5),
 	}
-
 	m.inputs[0] = newTextInput("Hostname", config.Hostname)
 	m.inputs[1] = newTextInput("IP Address", config.IPAddress)
 	m.inputs[2] = newTextInput("Netmask", config.Netmask)
 	m.inputs[3] = newTextInput("Gateway", config.Gateway)
 	m.inputs[4] = newTextInput("DNS Servers", config.DNSServers)
-
-	// Set detected interface
 	if len(ifaces) > 0 {
 		config.NetworkIface = ifaces[0]
 	}
-
 	return m
 }
 
-func (m NetworkModel) Init() tea.Cmd {
-	return textinput.Blink
-}
+func (m NetworkModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m NetworkModel) Update(msg tea.Msg) (NetworkModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
-			if m.focusIndex > 0 {
-				m.focusIndex--
-				m.updateFocus()
+			if m.cursor > 0 {
+				m.cursor--
+				m.syncInputFocus()
 			}
 			return m, nil
 		case "down", "j":
-			if m.showStatic && m.focusIndex < len(m.inputs)-1 {
-				m.focusIndex++
-				m.updateFocus()
+			if m.cursor < m.totalItems()-1 {
+				m.cursor++
+				m.syncInputFocus()
 			}
 			return m, nil
 		case "left":
-			if m.focusIndex == 0 && !m.showStatic && m.ifaceCursor > 0 {
+			if m.cursor == 0 && m.ifaceCursor > 0 {
 				m.ifaceCursor--
 				m.config.NetworkIface = m.interfaces[m.ifaceCursor]
 			}
 			return m, nil
 		case "right":
-			if m.focusIndex == 0 && !m.showStatic && m.ifaceCursor < len(m.interfaces)-1 {
+			if m.cursor == 0 && m.ifaceCursor < len(m.interfaces)-1 {
 				m.ifaceCursor++
 				m.config.NetworkIface = m.interfaces[m.ifaceCursor]
 			}
 			return m, nil
 		case " ":
-			if m.focusIndex == 0 && !m.showStatic {
-				m.dhcpToggle = !m.dhcpToggle
-				m.config.NetworkDHCP = m.dhcpToggle
-				m.showStatic = !m.dhcpToggle
-				if m.dhcpToggle {
-					m.focusIndex = 0
-				} else {
-					m.focusIndex = 1
-				}
-				m.updateFocus()
-				return m, nil
-			}
-			if m.focusIndex == 0 && m.showStatic {
-				m.dhcpToggle = !m.dhcpToggle
-				m.config.NetworkDHCP = m.dhcpToggle
-				m.showStatic = !m.dhcpToggle
-				if m.dhcpToggle {
-					m.focusIndex = 0
-					m.updateBlur()
-				}
-				m.updateFocus()
-				return m, nil
-			}
-			if m.showStatic && m.focusIndex == len(m.inputs)-1 {
-				m.saveInputs()
-				m.Next = true
-			}
+			m.dhcpToggle = !m.dhcpToggle
+			m.config.NetworkDHCP = m.dhcpToggle
+			m.showStatic = !m.dhcpToggle
+			m.syncInputFocus()
 			return m, nil
 		case "enter":
-			m.saveInputs()
-			m.Next = true
-			return m, nil
-		case "tab":
-			m.saveInputs()
-			m.Next = true
+			total := m.totalItems()
+			if m.cursor == total-2 {
+				m.saveInputs()
+				m.Next = true
+			} else if m.cursor == total-1 {
+				m.GoBack = true
+			}
 			return m, nil
 		}
 	}
 
 	var cmd tea.Cmd
-	if m.showStatic {
-		idx := m.focusIndex
-		if idx >= 0 && idx < len(m.inputs) {
-			m.inputs[idx], cmd = m.inputs[idx].Update(msg)
-		}
+	// Update focused input
+	focus := m.cursor
+	if focus >= 0 && focus < len(m.inputs) && (m.showStatic || focus == 0) {
+		m.inputs[focus], cmd = m.inputs[focus].Update(msg)
 	}
 	return m, cmd
 }
 
-func (m *NetworkModel) updateFocus() {
+func (m *NetworkModel) syncInputFocus() {
 	for i := range m.inputs {
-		if m.showStatic && i == m.focusIndex {
+		shouldFocus := i == m.cursor && (m.showStatic || i == 0)
+		if shouldFocus {
 			m.inputs[i].Focus()
 			m.inputs[i].TextStyle = InputFocusStyle
 		} else {
 			m.inputs[i].Blur()
 			m.inputs[i].TextStyle = InputStyle
 		}
-	}
-}
-
-func (m *NetworkModel) updateBlur() {
-	for i := range m.inputs {
-		m.inputs[i].Blur()
-		m.inputs[i].TextStyle = InputStyle
 	}
 }
 
@@ -181,81 +150,37 @@ func (m *NetworkModel) saveInputs() {
 
 func (m NetworkModel) View() string {
 	title := TitleStyle.Render("Network Configuration")
-	subtitle := SubtitleStyle.Render("Configure network settings for your server.")
+	subtitle := SubtitleStyle.Render("Configure network, ↓ to reach [Next].")
 
-	// NIC selector
-	ifaceLabel := lipgloss.NewStyle().Foreground(ColorWhite).Render("Interface: ")
-	var ifaceBtn string
-	if len(m.interfaces) > 0 {
-		ifaceBtn = lipgloss.NewStyle().
-			Background(ColorAccent).
-			Foreground(ColorWhite).
-			Bold(true).
-			Padding(0, 2).
-			Render(" " + m.interfaces[m.ifaceCursor] + " ")
+	nicStr := " [ " + m.interfaces[m.ifaceCursor] + " ] "
+	ifaceLine := lipgloss.NewStyle().Foreground(ColorWhite).Render("Interface:") + " " +
+		lipgloss.NewStyle().Background(ColorAccent).Foreground(ColorWhite).Bold(true).Padding(0, 2).Render(nicStr) +
+		" " + HelpStyle.Render("←/→ change")
+
+	modeStr := " DHCP "
+	if !m.dhcpToggle {
+		modeStr = " Static "
 	}
-	ifaceSelector := lipgloss.JoinHorizontal(lipgloss.Center, ifaceLabel, ifaceBtn)
-	ifaceHint := HelpStyle.Render("←/→ to change interface")
-
-	// DHCP/Static toggle
-	toggleLabel := lipgloss.NewStyle().Foreground(ColorWhite).Render("Network Mode: ")
-	var toggleBtn string
-	if m.dhcpToggle {
-		toggleBtn = lipgloss.NewStyle().
-			Background(ColorSuccess).
-			Foreground(ColorWhite).
-			Bold(true).
-			Padding(0, 2).
-			Render("  DHCP  ")
-	} else {
-		toggleBtn = lipgloss.NewStyle().
-			Background(ColorWarning).
-			Foreground(ColorDark).
-			Bold(true).
-			Padding(0, 2).
-			Render(" Static ")
+	modeColor := ColorSuccess
+	if !m.dhcpToggle {
+		modeColor = ColorWarning
 	}
-	toggle := lipgloss.JoinHorizontal(lipgloss.Center, toggleLabel, toggleBtn)
-	toggleHint := HelpStyle.Render("Press SPACE to toggle network mode")
+	toggleLine := lipgloss.NewStyle().Foreground(ColorWhite).Render("Mode:") + " " +
+		lipgloss.NewStyle().Background(modeColor).Foreground(ColorWhite).Bold(true).Padding(0, 2).Render(modeStr) +
+		" " + HelpStyle.Render("SPACE toggle")
 
-	// Hostname
-	hostnameLabel := lipgloss.NewStyle().Foreground(ColorWhite).Render("Hostname:")
-	hostnameInput := m.inputs[0].View()
+	items := ifaceLine + "\n" + toggleLine + "\n\n"
+	items += lipgloss.NewStyle().Foreground(ColorWhite).Render("Hostname:") + "\n" + m.inputs[0].View() + "\n"
 
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		ifaceSelector,
-		ifaceHint,
-		"",
-		toggle,
-		toggleHint,
-		"",
-		hostnameLabel,
-		hostnameInput,
-	)
-
-	// Static fields
 	if m.showStatic {
 		labels := []string{"IP Address:", "Netmask:", "Gateway:", "DNS Servers:"}
 		for i, label := range labels {
 			idx := i + 1
-			if idx < len(m.inputs) {
-				content = lipgloss.JoinVertical(
-					lipgloss.Left,
-					content,
-					"",
-					lipgloss.NewStyle().Foreground(ColorWhite).Render(label),
-					m.inputs[idx].View(),
-				)
-			}
+			items += "\n" + lipgloss.NewStyle().Foreground(ColorWhite).Render(label) + "\n" + m.inputs[idx].View() + "\n"
 		}
 	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		subtitle,
-		"",
-		BoxStyle.Render(content),
-	)
+	items += "\n" + renderNavButtons(m.cursor, m.totalItems()-2, m.totalItems()-1)
+
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", BoxStyle.Render(items))
 }
