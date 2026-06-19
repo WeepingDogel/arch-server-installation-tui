@@ -65,7 +65,7 @@ func FooterHelp() string {
 }
 
 // NavBar renders styled Back / Next navigation buttons.
-func NavBar(step, total, focus int, stepName string) string {
+func NavBar(step, total, focus int, _ string) string {
 	var backBtn string
 	if step > 1 {
 		if focus == 0 {

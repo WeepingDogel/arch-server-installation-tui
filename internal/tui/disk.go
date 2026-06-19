@@ -18,10 +18,7 @@ type DiskModel struct {
 	diskSizes map[string]string
 	subStep   int // 0=disk select, 1=partition scheme, 2=partition mode
 	Next      bool
-	scroll    int
 }
-
-const diskViewportHeight = 8
 
 // NewDiskModel creates the disk selection screen with detected disks.
 func NewDiskModel(config *model.Config) DiskModel {
@@ -91,8 +88,8 @@ func (m DiskModel) Update(msg tea.Msg) (DiskModel, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			max := m.itemCount() - 1
-			if m.cursor < max {
+			mx := m.itemCount() - 1
+			if m.cursor < mx {
 				m.cursor++
 			}
 		case "enter":
