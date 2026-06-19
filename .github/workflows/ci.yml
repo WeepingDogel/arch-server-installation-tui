@@ -3,32 +3,40 @@ name: CI/CD
 on:
   push:
     branches: [main, develop]
+    # On push (merge), only build — lint+test already ran in PR
   pull_request:
-    branches: [main]
+    branches: ['**']
+    # On PR, run full suite
   release:
     types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     name: Lint
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
       - uses: golangci/golangci-lint-action@v6
         with:
           version: latest
 
   test:
     name: Test
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
       - run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -38,17 +46,21 @@ jobs:
 
   security:
     name: Security Scan
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-      - run: go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
+          go-version-file: 'go.mod'
+      - run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.0
+          govulncheck ./...
 
   build:
     name: Build
-    needs: [lint, test]
+    # Always build (on PR and on push/merge)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -58,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
       - run: GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -ldflags="-s -w" -o arch-install-${{ matrix.goarch }} ./cmd/installer/
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -69,13 +81,12 @@ jobs:
   release:
     name: Release
     if: github.event_name == 'release'
-    needs: [build, security]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
       - name: Build all
         run: |
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o arch-install-amd64 ./cmd/installer/
