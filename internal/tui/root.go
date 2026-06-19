@@ -15,19 +15,19 @@ type RootModel struct {
 	step   int // 1-based step number
 
 	// Sub-models for each step
-	welcome     WelcomeModel
-	keyboard    KeyboardModel
-	network     NetworkModel
-	mirror      MirrorModel
-	disk        DiskModel
-	filesystem  FilesystemModel
-	bootloader  BootloaderModel
-	timezone    TimezoneModel
-	users       UsersModel
-	ssh         SSHModel
-	packages    PackagesModel
-	summary     SummaryModel
-	install     InstallModel
+	welcome    WelcomeModel
+	keyboard   KeyboardModel
+	network    NetworkModel
+	mirror     MirrorModel
+	disk       DiskModel
+	filesystem FilesystemModel
+	bootloader BootloaderModel
+	timezone   TimezoneModel
+	users      UsersModel
+	ssh        SSHModel
+	packages   PackagesModel
+	summary    SummaryModel
+	install    InstallModel
 
 	// Window size
 	width  int
@@ -40,21 +40,21 @@ type RootModel struct {
 func New() *RootModel {
 	cfg := model.DefaultConfig()
 	return &RootModel{
-		config:      cfg,
-		step:        1,
-		welcome:     NewWelcomeModel(cfg),
-		keyboard:    NewKeyboardModel(cfg),
-		network:     NewNetworkModel(cfg),
-		mirror:      NewMirrorModel(cfg),
-		disk:        NewDiskModel(cfg),
-		filesystem:  NewFilesystemModel(cfg),
-		bootloader:  NewBootloaderModel(cfg),
-		timezone:    NewTimezoneModel(cfg),
-		users:       NewUsersModel(cfg),
-		ssh:         NewSSHModel(cfg),
-		packages:    NewPackagesModel(cfg),
-		summary:     NewSummaryModel(cfg),
-		install:     NewInstallModel(cfg),
+		config:     cfg,
+		step:       1,
+		welcome:    NewWelcomeModel(cfg),
+		keyboard:   NewKeyboardModel(cfg),
+		network:    NewNetworkModel(cfg),
+		mirror:     NewMirrorModel(cfg),
+		disk:       NewDiskModel(cfg),
+		filesystem: NewFilesystemModel(cfg),
+		bootloader: NewBootloaderModel(cfg),
+		timezone:   NewTimezoneModel(cfg),
+		users:      NewUsersModel(cfg),
+		ssh:        NewSSHModel(cfg),
+		packages:   NewPackagesModel(cfg),
+		summary:    NewSummaryModel(cfg),
+		install:    NewInstallModel(cfg),
 	}
 }
 

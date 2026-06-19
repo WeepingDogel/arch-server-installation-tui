@@ -8,8 +8,8 @@ import (
 
 // FilesystemModel handles filesystem type selection.
 type FilesystemModel struct {
-	config *model.Config
-	cursor int
+	config  *model.Config
+	cursor  int
 	fsTypes []fsOption
 	Next    bool
 }
