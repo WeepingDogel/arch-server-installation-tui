@@ -55,8 +55,10 @@ func (m KeyboardModel) Update(msg tea.Msg) (KeyboardModel, tea.Cmd) {
 			}
 		case "enter":
 			total := m.totalItems()
-			if m.cursor == total-2 { // Next button
-				m.config.KeyboardLayout = m.layouts[m.cursor]
+			if m.cursor == total-2 { // Next button - use current selection
+				if m.config.KeyboardLayout == "" {
+					m.config.KeyboardLayout = m.layouts[0]
+				}
 				m.Next = true
 			} else if m.cursor == total-1 { // Back button
 				m.GoBack = true
