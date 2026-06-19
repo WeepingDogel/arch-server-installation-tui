@@ -30,7 +30,7 @@ func (m SummaryModel) Update(msg tea.Msg) (SummaryModel, tea.Cmd) {
 		switch msg.String() {
 		case "up", "k", "down", "j":
 			m.cursor = 1 - m.cursor
-		case "enter", " ":
+		case "enter":
 			if m.cursor == 0 {
 				m.Confirmed = true
 			} else {

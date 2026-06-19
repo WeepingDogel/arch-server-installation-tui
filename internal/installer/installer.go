@@ -78,10 +78,11 @@ func (inst *Installer) Install(progress chan<- ProgressUpdate) {
 
 // ProgressUpdate is sent through the channel during installation.
 type ProgressUpdate struct {
-	Percent float64
-	Message string
-	Done    bool
-	Err     error
+	Percent   float64
+	Message   string
+	LogOutput string
+	Done      bool
+	Err       error
 }
 
 // safeExec runs a command and returns its output.
@@ -102,9 +103,147 @@ func (inst *Installer) chrootExec(args ...string) (string, error) {
 	return safeExec(cmd[0], cmd[1:]...)
 }
 
-func (inst *Installer) partitionDisk() error     { return nil }
-func (inst *Installer) formatFilesystems() error { return nil }
-func (inst *Installer) mountPartitions() error   { return nil }
+// partitionDisk creates partitions based on user config.
+func (inst *Installer) partitionDisk() error {
+	dev := inst.config.DiskDevice
+	if dev == "" {
+		return fmt.Errorf("no disk device selected")
+	}
+
+	if inst.config.PartitionScheme == "gpt" {
+		_, err := safeExec("parted", "-s", dev, "mklabel", "gpt")
+		if err != nil {
+			return err
+		}
+		_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "fat32", "1M", "513M")
+		if err != nil {
+			return err
+		}
+		_, err = safeExec("parted", "-s", dev, "set", "1", "esp", "on")
+		if err != nil {
+			return err
+		}
+		if inst.config.SwapSize != "" {
+			efiEnd := unitToMB("513M")
+			swapEnd := efiEnd + unitToMB(inst.config.SwapSize)
+			_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "linux-swap", fmt.Sprintf("%dM", efiEnd), fmt.Sprintf("%dM", swapEnd))
+			if err != nil {
+				return err
+			}
+			_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "ext4", fmt.Sprintf("%dM", swapEnd), "100%")
+			return err
+		}
+		_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "ext4", "513M", "100%")
+		return err
+	}
+
+	_, err := safeExec("parted", "-s", dev, "mklabel", "msdos")
+	if err != nil {
+		return err
+	}
+	_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "ext4", "1M", "100%")
+	if err != nil {
+		return err
+	}
+	_, err = safeExec("parted", "-s", dev, "set", "1", "boot", "on")
+	return err
+}
+
+// unitToMB parses a size string like "512M", "4G" and returns MB.
+func unitToMB(size string) int {
+	if strings.HasSuffix(size, "M") || strings.HasSuffix(size, "m") {
+		var n int
+		_, _ = fmt.Sscanf(size, "%d", &n)
+		return n
+	}
+	if strings.HasSuffix(size, "G") || strings.HasSuffix(size, "g") {
+		var n float64
+		_, _ = fmt.Sscanf(size, "%f", &n)
+		return int(n * 1024)
+	}
+	return 0
+}
+
+// formatFilesystems formats the created partitions.
+func (inst *Installer) formatFilesystems() error {
+	dev := inst.config.DiskDevice
+	fsType := inst.config.FilesystemType
+
+	if inst.config.PartitionScheme == "gpt" {
+		_, err := safeExec("mkfs.fat", "-F32", devPart(dev, 1))
+		if err != nil {
+			return err
+		}
+		rootPart := 2
+		if inst.config.SwapSize != "" {
+			rootPart = 3
+		}
+		return formatPartition(devPart(dev, rootPart), fsType)
+	}
+
+	return formatPartition(devPart(dev, 1), fsType)
+}
+
+func devPart(dev string, part int) string {
+	if strings.Contains(dev, "nvme") || strings.Contains(dev, "mmcblk") {
+		return fmt.Sprintf("%sp%d", dev, part)
+	}
+	return fmt.Sprintf("%s%d", dev, part)
+}
+
+func formatPartition(part, fsType string) error {
+	switch fsType {
+	case "btrfs":
+		_, err := safeExec("mkfs.btrfs", "-f", part)
+		return err
+	case "xfs":
+		_, err := safeExec("mkfs.xfs", "-f", part)
+		return err
+	case "f2fs":
+		_, err := safeExec("mkfs.f2fs", "-f", part)
+		return err
+	default:
+		_, err := safeExec("mkfs.ext4", "-F", part)
+		return err
+	}
+}
+
+// mountPartitions mounts filesystems to /mnt.
+func (inst *Installer) mountPartitions() error {
+	dev := inst.config.DiskDevice
+	rootPart := 2
+	if inst.config.SwapSize != "" {
+		rootPart = 3
+	}
+	if inst.config.PartitionScheme == "mbr" {
+		rootPart = 1
+	}
+
+	_, err := safeExec("mount", devPart(dev, rootPart), "/mnt")
+	if err != nil {
+		return err
+	}
+
+	if inst.config.PartitionScheme == "gpt" {
+		_, err = safeExec("mkdir", "-p", "/mnt/boot")
+		if err != nil {
+			return err
+		}
+		_, err = safeExec("mount", devPart(dev, 1), "/mnt/boot")
+		if err != nil {
+			return err
+		}
+	}
+
+	if inst.config.SwapSize != "" {
+		_, err = safeExec("swapon", devPart(dev, 2))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
 
 // pacstrapBase installs the base system using pacstrap.
 func (inst *Installer) pacstrapBase() error {
@@ -153,7 +292,6 @@ func (inst *Installer) configureLocale() error {
 	}
 
 	for _, locale := range locales {
-		// Uncomment the locale in locale.gen
 		_, err := inst.chrootExec("sed", "-i", fmt.Sprintf("s/^#%s/%s/", locale, locale), "/etc/locale.gen")
 		if err != nil {
 			return err
@@ -164,7 +302,6 @@ func (inst *Installer) configureLocale() error {
 	if err != nil {
 		return err
 	}
-	// Set LANG to the first locale
 	echoCmd := fmt.Sprintf("echo 'LANG=%s' > /etc/locale.conf", locales[0])
 	_, err = inst.chrootExec("sh", "-c", echoCmd)
 	return err
@@ -318,7 +455,6 @@ func (inst *Installer) finalize() error {
 	if err != nil {
 		return err
 	}
-	// Add Arch Linux CN repository if enabled
 	if inst.config.EnableArchCN && inst.config.ArchCNMirror != "" {
 		repoLine := fmt.Sprintf("\n[archlinuxcn]\nServer = %s/$arch\n", inst.config.ArchCNMirror)
 		_, err = inst.chrootExec("sh", "-c",

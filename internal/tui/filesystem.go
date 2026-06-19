@@ -47,10 +47,7 @@ func (m FilesystemModel) Update(msg tea.Msg) (FilesystemModel, tea.Cmd) {
 			if m.cursor < len(m.fsTypes)-1 {
 				m.cursor++
 			}
-		case "enter", " ":
-			m.config.FilesystemType = m.fsTypes[m.cursor].name
-			m.Next = true
-		case "tab":
+		case "enter":
 			m.config.FilesystemType = m.fsTypes[m.cursor].name
 			m.Next = true
 		}
@@ -64,18 +61,9 @@ func (m FilesystemModel) View() string {
 
 	var items string
 	for i, fs := range m.fsTypes {
-		style := ListItemStyle
-		prefix := "  "
-		if i == m.cursor {
-			style = ListItemSelectedStyle
-			prefix = "▶ "
-		}
-		selected := ""
-		if m.config.FilesystemType == fs.name {
-			selected = SuccessStyle.Render(" ✓")
-		}
+		sel := m.config.FilesystemType == fs.name
 		desc := lipgloss.NewStyle().Foreground(ColorGray).Render(" — " + fs.desc)
-		items += style.Render(prefix+fs.name+desc+selected) + "\n"
+		items += ListItem(i == m.cursor, sel, RadioButton(sel, fs.name+desc)) + "\n"
 	}
 
 	return lipgloss.JoinVertical(

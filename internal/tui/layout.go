@@ -5,12 +5,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Screen returns a rendered screen with header, content, and footer.
-func Screen(step int, content, footer string) string {
+// Screen returns a rendered screen with header, content, navigation bar, and footer.
+func Screen(step int, content, footer string, navFocus int) string {
 	header := renderHeader(step)
 	contentBox := lipgloss.NewStyle().
 		Padding(0, 1).
 		Render(content)
+
+	navBar := NavBar(step, TotalSteps, navFocus, StepName(step))
 
 	footerBox := FooterStyle.Render(footer)
 
@@ -19,6 +21,8 @@ func Screen(step int, content, footer string) string {
 		header,
 		"",
 		contentBox,
+		"",
+		navBar,
 		"",
 		footerBox,
 	)
@@ -55,14 +59,78 @@ func FooterHelp() string {
 		HelpStyle.Render("↑/↓ Navigate  "),
 		HelpStyle.Render("Enter Select  "),
 		HelpStyle.Render("Esc Back  "),
-		HelpStyle.Render("Tab Next  "),
+		HelpStyle.Render("←/→ Nav buttons  "),
 		HelpStyle.Render("Ctrl+C Quit"),
 	)
 }
 
-// SimpleFooter returns a minimal footer.
+// NavBar renders styled Back / Next navigation buttons.
+func NavBar(step, total, focus int, _ string) string {
+	var backBtn string
+	if step > 1 {
+		if focus == 0 {
+			backBtn = lipgloss.NewStyle().
+				Background(ColorAccent).
+				Foreground(ColorWhite).
+				Bold(true).
+				Padding(0, 4).
+				Render("◀  Back")
+		} else {
+			backBtn = lipgloss.NewStyle().
+				Background(ColorDark).
+				Foreground(ColorAccent).
+				Padding(0, 4).
+				Render("◀  Back")
+		}
+	}
+
+	var nextBtn string
+	if step < total {
+		if focus == 1 {
+			nextBtn = lipgloss.NewStyle().
+				Background(ColorPrimary).
+				Foreground(ColorWhite).
+				Bold(true).
+				Padding(0, 4).
+				Render("Next  ▶")
+		} else {
+			nextBtn = lipgloss.NewStyle().
+				Background(ColorDark).
+				Foreground(ColorPrimary).
+				Padding(0, 4).
+				Render("Next  ▶")
+		}
+	}
+
+	// On step 12 (last before install), show Install button
+	if step == total-1 {
+		if focus == 1 {
+			nextBtn = lipgloss.NewStyle().
+				Background(ColorSuccess).
+				Foreground(ColorWhite).
+				Bold(true).
+				Padding(0, 4).
+				Render("Install  ▶")
+		} else {
+			nextBtn = lipgloss.NewStyle().
+				Background(ColorDark).
+				Foreground(ColorSuccess).
+				Padding(0, 4).
+				Render("Install  ▶")
+		}
+	}
+
+	return lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		backBtn,
+		"  ",
+		nextBtn,
+	)
+}
+
+// SimpleFooter returns a minimal footer with keyboard hints.
 func SimpleFooter() string {
-	return HelpStyle.Render("↑/↓  •  Enter  •  Esc  •  Tab  •  Ctrl+C")
+	return HelpStyle.Render("↑/↓  •  Enter  •  ←/→ Nav  •  Esc Back  •  Ctrl+C Quit")
 }
 
 // ErrorBox renders an error message in a styled box.
@@ -108,13 +176,39 @@ func newPasswordInput(placeholder, value string) textinput.Model {
 	return ti
 }
 
-// CheckBox returns a styled checkbox for the given state.
-func CheckBox(checked bool, label string) string {
-	var prefix string
-	if checked {
-		prefix = lipgloss.NewStyle().Foreground(ColorSuccess).Render("✓ ")
+// RadioButton renders a radio button indicator.
+func RadioButton(selected bool, label string) string {
+	var indicator string
+	if selected {
+		indicator = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true).Render("◉ ")
 	} else {
-		prefix = lipgloss.NewStyle().Foreground(ColorGray).Render("○ ")
+		indicator = lipgloss.NewStyle().Foreground(ColorGray).Render("○ ")
 	}
-	return prefix + label
+	return indicator + label
+}
+
+// Checkbox renders a checkbox indicator.
+func Checkbox(checked bool, label string) string {
+	var indicator string
+	if checked {
+		indicator = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true).Render("☑ ")
+	} else {
+		indicator = lipgloss.NewStyle().Foreground(ColorGray).Render("☐ ")
+	}
+	return indicator + label
+}
+
+// ListItem renders a single list item with cursor indicator.
+func ListItem(isCursor, isSelected bool, label string) string {
+	style := ListItemStyle
+	prefix := "  "
+	if isCursor {
+		style = ListItemSelectedStyle
+		prefix = "▶ "
+	}
+	suffix := ""
+	if isSelected {
+		suffix = " " + lipgloss.NewStyle().Foreground(ColorSuccess).Render("✓")
+	}
+	return style.Render(prefix + label + suffix)
 }

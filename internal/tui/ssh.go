@@ -50,12 +50,11 @@ func (m SSHModel) Update(msg tea.Msg) (SSHModel, tea.Cmd) {
 				m.updateFocus()
 			}
 			return m, nil
-		case " ", "enter":
-			// Toggle SSH enable/disable
-			if m.focusIndex == 0 && m.config.EnableSSH {
-				m.config.EnableSSH = !m.config.EnableSSH
-				return m, nil
-			}
+		case " ":
+			// Toggle SSH on/off with SPACE
+			m.config.EnableSSH = !m.config.EnableSSH
+			return m, nil
+		case "enter":
 			m.saveInputs()
 			m.Next = true
 			return m, nil
@@ -143,7 +142,7 @@ func (m SSHModel) View() string {
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		lipgloss.JoinHorizontal(lipgloss.Center, enableLabel, enableBtn),
-		HelpStyle.Render("Press SPACE to toggle SSH"),
+		HelpStyle.Render("Press SPACE to toggle SSH on/off"),
 		"",
 		portLabel,
 		portInput,

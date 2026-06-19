@@ -23,7 +23,7 @@ func (m WelcomeModel) Update(msg tea.Msg) (WelcomeModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "enter", " ", "tab":
+		case "enter", "tab":
 			m.Next = true
 		}
 	}
@@ -41,10 +41,10 @@ func (m WelcomeModel) View() string {
 			lipgloss.Left,
 			TitleStyle.Render("Requirements:"),
 			"",
-			CheckBox(true, "Active internet connection"),
-			CheckBox(true, "Arch Linux ISO booted"),
-			CheckBox(true, "64-bit (x86_64) or ARM64 processor"),
-			CheckBox(true, "At least 8GB of disk space"),
+			Checkbox(true, "Active internet connection"),
+			Checkbox(true, "Arch Linux ISO booted"),
+			Checkbox(true, "64-bit (x86_64) or ARM64 processor"),
+			Checkbox(true, "At least 8GB of disk space"),
 			"",
 			SubtitleStyle.Render("Press ENTER or TAB to begin ▶"),
 		),
