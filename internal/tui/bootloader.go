@@ -11,6 +11,7 @@ type BootloaderModel struct {
 	config *model.Config
 	cursor int
 	Next   bool
+	GoBack bool
 }
 
 // NewBootloaderModel creates the bootloader selection screen.

@@ -1,7 +1,9 @@
 package installer
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 
@@ -18,56 +20,90 @@ func New(config *model.Config) *Installer {
 	return &Installer{config: config}
 }
 
-// Result contains the installation outcome.
-type Result struct {
-	Success bool
-	Message string
-	Err     error
+// ProgressUpdate is sent through the channel during installation.
+type ProgressUpdate struct {
+	Percent   float64
+	Message   string
+	LogOutput string
+	Stage     string // step name for grouping
+	Done      bool
+	Err       error
 }
 
-// Install runs the full installation pipeline and sends progress updates.
+// Install runs the full installation pipeline.
 func (inst *Installer) Install(progress chan<- ProgressUpdate) {
 	defer close(progress)
 
-	steps := []struct {
-		name string
-		fn   func() error
-	}{
-		{"Partitioning disk", inst.partitionDisk},
-		{"Formatting filesystems", inst.formatFilesystems},
-		{"Mounting partitions", inst.mountPartitions},
-		{"Installing base system", inst.pacstrapBase},
-		{"Generating fstab", inst.generateFstab},
-		{"Configuring timezone", inst.configureTimezone},
-		{"Setting up locale", inst.configureLocale},
-		{"Setting hostname", inst.setHostname},
-		{"Configuring network", inst.configureNetwork},
-		{"Setting root password", inst.setRootPassword},
-		{"Creating user account", inst.createUser},
-		{"Installing bootloader", inst.installBootloader},
-		{"Configuring SSH", inst.configureSSH},
-		{"Installing additional packages", inst.installPackages},
-		{"Finalizing", inst.finalize},
-	}
+	totalSteps := 15.0
+	step := 0
 
-	totalSteps := float64(len(steps))
-	for i, step := range steps {
-		percent := (float64(i) / totalSteps) * 100
+	// Helper to run a step with real-time log output
+	run := func(name string, fn func(chan<- string) error) {
+		percent := (float64(step) / totalSteps) * 100
+		step++
+
+		// Send initial message
 		progress <- ProgressUpdate{
 			Percent: percent,
-			Message: step.name + "...",
+			Message: name + "...",
+			Stage:   name,
 		}
 
-		if err := step.fn(); err != nil {
+		// Create a channel for log lines
+		logCh := make(chan string, 100)
+		done := make(chan error, 1)
+
+		go func() {
+			done <- fn(logCh)
+			close(logCh)
+		}()
+
+		// Stream log lines until step finishes
+		for line := range logCh {
 			progress <- ProgressUpdate{
-				Percent: percent,
-				Message: "Error: " + err.Error(),
-				Done:    true,
-				Err:     err,
+				Percent:   percent,
+				Message:   name,
+				LogOutput: line,
+				Stage:     name,
+			}
+		}
+
+		err := <-done
+		if err != nil {
+			progress <- ProgressUpdate{
+				Percent:   percent,
+				Message:   "Error: " + err.Error(),
+				LogOutput: err.Error(),
+				Stage:     name + " [FAILED]",
+				Done:      true,
+				Err:       err,
 			}
 			return
 		}
+
+		progress <- ProgressUpdate{
+			Percent:   percent + (100.0/totalSteps)*0.5,
+			Message:   name + " ✓",
+			Stage:     name + " [OK]",
+			LogOutput: "",
+		}
 	}
+
+	run("Partitioning disk", inst.partitionDisk)
+	run("Formatting filesystems", inst.formatFilesystems)
+	run("Mounting partitions", inst.mountPartitions)
+	run("Installing base system", inst.pacstrapBase)
+	run("Generating fstab", inst.generateFstab)
+	run("Configuring timezone", inst.configureTimezone)
+	run("Setting up locale", inst.configureLocale)
+	run("Setting hostname", inst.setHostname)
+	run("Configuring network", inst.configureNetwork)
+	run("Setting root password", inst.setRootPassword)
+	run("Creating user account", inst.createUser)
+	run("Installing bootloader", inst.installBootloader)
+	run("Configuring SSH", inst.configureSSH)
+	run("Installing additional packages", inst.installPackages)
+	run("Finalizing", inst.finalize)
 
 	progress <- ProgressUpdate{
 		Percent: 100,
@@ -76,80 +112,125 @@ func (inst *Installer) Install(progress chan<- ProgressUpdate) {
 	}
 }
 
-// ProgressUpdate is sent through the channel during installation.
-type ProgressUpdate struct {
-	Percent   float64
-	Message   string
-	LogOutput string
-	Done      bool
-	Err       error
-}
-
-// safeExec runs a command and returns its output.
-func safeExec(name string, args ...string) (string, error) {
+// streamExec runs a command and streams each line of output to the channel.
+func streamExec(logCh chan<- string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return string(output), fmt.Errorf("command '%s %s' failed: %v\nOutput: %s",
-			name, strings.Join(args, " "), err, string(output))
+		return err
 	}
-	return string(output), nil
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// Read stdout line by line
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 1024*64), 1024*64)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line != "" {
+				logCh <- line
+			}
+		}
+	}()
+
+	// Read stderr line by line
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line != "" {
+				logCh <- line
+			}
+		}
+	}()
+
+	// Wait for stderr/stdout to finish
+	_, _ = io.Copy(io.Discard, stderr)
+	_, _ = io.Copy(io.Discard, stdout)
+
+	return cmd.Wait()
 }
 
-// chrootExec runs a command inside the chroot environment.
-func (inst *Installer) chrootExec(args ...string) (string, error) {
+// chrootExecStream runs a command inside chroot and streams output.
+func (inst *Installer) chrootExecStream(logCh chan<- string, args ...string) error {
 	cmd := []string{"arch-chroot", "/mnt"}
 	cmd = append(cmd, args...)
-	return safeExec(cmd[0], cmd[1:]...)
+	return streamExec(logCh, cmd[0], cmd[1:]...)
 }
 
 // partitionDisk creates partitions based on user config.
-func (inst *Installer) partitionDisk() error {
+func (inst *Installer) partitionDisk(logCh chan<- string) error {
 	dev := inst.config.DiskDevice
 	if dev == "" {
 		return fmt.Errorf("no disk device selected")
 	}
 
+	logCh <- fmt.Sprintf("Partitioning %s (%s scheme)...", dev, strings.ToUpper(inst.config.PartitionScheme))
+
 	if inst.config.PartitionScheme == "gpt" {
-		_, err := safeExec("parted", "-s", dev, "mklabel", "gpt")
-		if err != nil {
-			return err
+		if err := streamExec(logCh, "parted", "-s", dev, "mklabel", "gpt"); err != nil {
+			return fmt.Errorf("failed to create GPT label: %w", err)
 		}
-		_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "fat32", "1M", "513M")
-		if err != nil {
-			return err
+		logCh <- "Created GPT partition table."
+
+		if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "fat32", "1M", "513M"); err != nil {
+			return fmt.Errorf("failed to create EFI partition: %w", err)
 		}
-		_, err = safeExec("parted", "-s", dev, "set", "1", "esp", "on")
-		if err != nil {
-			return err
-		}
-		if inst.config.SwapSize != "" {
-			efiEnd := unitToMB("513M")
-			swapEnd := efiEnd + unitToMB(inst.config.SwapSize)
-			_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "linux-swap", fmt.Sprintf("%dM", efiEnd), fmt.Sprintf("%dM", swapEnd))
-			if err != nil {
-				return err
+		logCh <- "Created EFI partition (512MB)."
+
+		if inst.config.UEFIMode {
+			if err := streamExec(logCh, "parted", "-s", dev, "set", "1", "esp", "on"); err != nil {
+				return fmt.Errorf("failed to set ESP flag: %w", err)
 			}
-			_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "ext4", fmt.Sprintf("%dM", swapEnd), "100%")
-			return err
+			logCh <- "Set ESP flag on partition 1."
 		}
-		_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "ext4", "513M", "100%")
-		return err
+
+		if inst.config.SwapSize != "" {
+			swapEnd := 513 + unitToMB(inst.config.SwapSize)
+			if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "linux-swap", "513M", fmt.Sprintf("%dM", swapEnd)); err != nil {
+				return fmt.Errorf("failed to create swap partition: %w", err)
+			}
+			logCh <- fmt.Sprintf("Created swap partition (%s).", inst.config.SwapSize)
+
+			if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "ext4", fmt.Sprintf("%dM", swapEnd), "100%"); err != nil {
+				return fmt.Errorf("failed to create root partition: %w", err)
+			}
+			logCh <- "Created root partition."
+			return nil
+		}
+
+		if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "ext4", "513M", "100%"); err != nil {
+			return fmt.Errorf("failed to create root partition: %w", err)
+		}
+		logCh <- "Created root partition."
+		return nil
 	}
 
-	_, err := safeExec("parted", "-s", dev, "mklabel", "msdos")
-	if err != nil {
-		return err
+	// MBR
+	if err := streamExec(logCh, "parted", "-s", dev, "mklabel", "msdos"); err != nil {
+		return fmt.Errorf("failed to create MBR label: %w", err)
 	}
-	_, err = safeExec("parted", "-s", dev, "mkpart", "primary", "ext4", "1M", "100%")
-	if err != nil {
-		return err
+	logCh <- "Created MBR partition table."
+
+	if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "ext4", "1M", "100%"); err != nil {
+		return fmt.Errorf("failed to create root partition: %w", err)
 	}
-	_, err = safeExec("parted", "-s", dev, "set", "1", "boot", "on")
-	return err
+	logCh <- "Created root partition."
+
+	if err := streamExec(logCh, "parted", "-s", dev, "set", "1", "boot", "on"); err != nil {
+		return fmt.Errorf("failed to set boot flag: %w", err)
+	}
+	logCh <- "Set boot flag on partition 1."
+	return nil
 }
 
-// unitToMB parses a size string like "512M", "4G" and returns MB.
 func unitToMB(size string) int {
 	if strings.HasSuffix(size, "M") || strings.HasSuffix(size, "m") {
 		var n int
@@ -164,26 +245,6 @@ func unitToMB(size string) int {
 	return 0
 }
 
-// formatFilesystems formats the created partitions.
-func (inst *Installer) formatFilesystems() error {
-	dev := inst.config.DiskDevice
-	fsType := inst.config.FilesystemType
-
-	if inst.config.PartitionScheme == "gpt" {
-		_, err := safeExec("mkfs.fat", "-F32", devPart(dev, 1))
-		if err != nil {
-			return err
-		}
-		rootPart := 2
-		if inst.config.SwapSize != "" {
-			rootPart = 3
-		}
-		return formatPartition(devPart(dev, rootPart), fsType)
-	}
-
-	return formatPartition(devPart(dev, 1), fsType)
-}
-
 func devPart(dev string, part int) string {
 	if strings.Contains(dev, "nvme") || strings.Contains(dev, "mmcblk") {
 		return fmt.Sprintf("%sp%d", dev, part)
@@ -191,25 +252,48 @@ func devPart(dev string, part int) string {
 	return fmt.Sprintf("%s%d", dev, part)
 }
 
-func formatPartition(part, fsType string) error {
+// formatFilesystems formats the created partitions.
+func (inst *Installer) formatFilesystems(logCh chan<- string) error {
+	dev := inst.config.DiskDevice
+	fsType := inst.config.FilesystemType
+
+	switch inst.config.PartitionScheme {
+	case "gpt":
+		logCh <- fmt.Sprintf("Formatting EFI partition %s...", devPart(dev, 1))
+		if err := streamExec(logCh, "mkfs.fat", "-F32", devPart(dev, 1)); err != nil {
+			return fmt.Errorf("failed to format EFI: %w", err)
+		}
+		rootPart := 2
+		if inst.config.SwapSize != "" {
+			rootPart = 3
+		}
+		logCh <- fmt.Sprintf("Formatting root partition %s as %s...", devPart(dev, rootPart), fsType)
+		return formatPartitionStream(logCh, devPart(dev, rootPart), fsType)
+
+	default: // MBR
+		return formatPartitionStream(logCh, devPart(dev, 1), fsType)
+	}
+}
+
+func formatPartitionStream(logCh chan<- string, part, fsType string) error {
 	switch fsType {
 	case "btrfs":
-		_, err := safeExec("mkfs.btrfs", "-f", part)
-		return err
+		logCh <- fmt.Sprintf("Running mkfs.btrfs on %s...", part)
+		return streamExec(logCh, "mkfs.btrfs", "-f", part)
 	case "xfs":
-		_, err := safeExec("mkfs.xfs", "-f", part)
-		return err
+		logCh <- fmt.Sprintf("Running mkfs.xfs on %s...", part)
+		return streamExec(logCh, "mkfs.xfs", "-f", part)
 	case "f2fs":
-		_, err := safeExec("mkfs.f2fs", "-f", part)
-		return err
+		logCh <- fmt.Sprintf("Running mkfs.f2fs on %s...", part)
+		return streamExec(logCh, "mkfs.f2fs", "-f", part)
 	default:
-		_, err := safeExec("mkfs.ext4", "-F", part)
-		return err
+		logCh <- fmt.Sprintf("Running mkfs.ext4 on %s...", part)
+		return streamExec(logCh, "mkfs.ext4", "-F", part)
 	}
 }
 
 // mountPartitions mounts filesystems to /mnt.
-func (inst *Installer) mountPartitions() error {
+func (inst *Installer) mountPartitions(logCh chan<- string) error {
 	dev := inst.config.DiskDevice
 	rootPart := 2
 	if inst.config.SwapSize != "" {
@@ -219,26 +303,26 @@ func (inst *Installer) mountPartitions() error {
 		rootPart = 1
 	}
 
-	_, err := safeExec("mount", devPart(dev, rootPart), "/mnt")
-	if err != nil {
-		return err
+	logCh <- fmt.Sprintf("Mounting %s to /mnt...", devPart(dev, rootPart))
+	if err := streamExec(logCh, "mount", devPart(dev, rootPart), "/mnt"); err != nil {
+		return fmt.Errorf("failed to mount root: %w", err)
 	}
 
 	if inst.config.PartitionScheme == "gpt" {
-		_, err = safeExec("mkdir", "-p", "/mnt/boot")
-		if err != nil {
+		logCh <- "Creating /mnt/boot..."
+		if err := streamExec(logCh, "mkdir", "-p", "/mnt/boot"); err != nil {
 			return err
 		}
-		_, err = safeExec("mount", devPart(dev, 1), "/mnt/boot")
-		if err != nil {
-			return err
+		logCh <- fmt.Sprintf("Mounting %s to /mnt/boot...", devPart(dev, 1))
+		if err := streamExec(logCh, "mount", devPart(dev, 1), "/mnt/boot"); err != nil {
+			return fmt.Errorf("failed to mount EFI: %w", err)
 		}
 	}
 
 	if inst.config.SwapSize != "" {
-		_, err = safeExec("swapon", devPart(dev, 2))
-		if err != nil {
-			return err
+		logCh <- "Enabling swap..."
+		if err := streamExec(logCh, "swapon", devPart(dev, 2)); err != nil {
+			return fmt.Errorf("failed to enable swap: %w", err)
 		}
 	}
 
@@ -246,7 +330,7 @@ func (inst *Installer) mountPartitions() error {
 }
 
 // pacstrapBase installs the base system using pacstrap.
-func (inst *Installer) pacstrapBase() error {
+func (inst *Installer) pacstrapBase(logCh chan<- string) error {
 	packages := []string{"base", "linux", "linux-firmware"}
 	if inst.config.InstallBaseDev {
 		packages = append(packages, "base-devel")
@@ -259,152 +343,171 @@ func (inst *Installer) pacstrapBase() error {
 	case "linux-hardened":
 		packages[1] = "linux-hardened"
 	}
-	_, err := safeExec("pacstrap", append([]string{"/mnt"}, packages...)...)
-	return err
+	// Bootloader packages
+	if inst.config.BootloaderType == "grub" {
+		packages = append(packages, "grub")
+		if inst.config.UEFIMode {
+			packages = append(packages, "efibootmgr")
+		}
+	}
+
+	logCh <- fmt.Sprintf("Installing base system via pacstrap (%d packages)...", len(packages))
+	logCh <- "Packages: " + strings.Join(packages, ", ")
+	logCh <- "This may take a while depending on your internet speed..."
+
+	args := append([]string{"/mnt"}, packages...)
+	if err := streamExec(logCh, "pacstrap", args...); err != nil {
+		return fmt.Errorf("pacstrap failed: %w", err)
+	}
+	logCh <- "Base system installed successfully."
+	return nil
 }
 
 // generateFstab generates the fstab file.
-func (inst *Installer) generateFstab() error {
-	_, err := safeExec("genfstab", "-U", "/mnt")
-	if err != nil {
-		return err
-	}
-	_, err = safeExec("sh", "-c", "genfstab -U /mnt >> /mnt/etc/fstab")
-	return err
+func (inst *Installer) generateFstab(logCh chan<- string) error {
+	logCh <- "Generating fstab..."
+	return streamExec(logCh, "sh", "-c", "genfstab -U /mnt >> /mnt/etc/fstab")
 }
 
 // configureTimezone sets the system timezone.
-func (inst *Installer) configureTimezone() error {
+func (inst *Installer) configureTimezone(logCh chan<- string) error {
 	if inst.config.TimezoneRegion == "UTC" {
-		_, err := inst.chrootExec("ln", "-sf", "/usr/share/zoneinfo/UTC", "/etc/localtime")
-		return err
+		logCh <- "Setting timezone to UTC..."
+		return inst.chrootExecStream(logCh, "ln", "-sf", "/usr/share/zoneinfo/UTC", "/etc/localtime")
 	}
 	tzPath := fmt.Sprintf("/usr/share/zoneinfo/%s", inst.config.TimezoneRegion)
-	_, err := inst.chrootExec("ln", "-sf", tzPath, "/etc/localtime")
-	return err
+	logCh <- fmt.Sprintf("Setting timezone to %s...", inst.config.TimezoneRegion)
+	return inst.chrootExecStream(logCh, "ln", "-sf", tzPath, "/etc/localtime")
 }
 
-// configureLocale sets up locale configuration (supports multiple locales).
-func (inst *Installer) configureLocale() error {
+// configureLocale sets up locale configuration.
+func (inst *Installer) configureLocale(logCh chan<- string) error {
 	locales := inst.config.Locales
 	if len(locales) == 0 {
 		locales = []string{"en_US.UTF-8"}
 	}
-
 	for _, locale := range locales {
-		_, err := inst.chrootExec("sed", "-i", fmt.Sprintf("s/^#%s/%s/", locale, locale), "/etc/locale.gen")
-		if err != nil {
-			return err
+		logCh <- fmt.Sprintf("Enabling locale: %s", locale)
+		if err := inst.chrootExecStream(logCh, "sed", "-i", fmt.Sprintf("s/^#%s/%s/", locale, locale), "/etc/locale.gen"); err != nil {
+			return fmt.Errorf("failed to enable locale %s: %w", locale, err)
 		}
 	}
-
-	_, err := inst.chrootExec("locale-gen")
-	if err != nil {
-		return err
+	logCh <- "Running locale-gen..."
+	if err := inst.chrootExecStream(logCh, "locale-gen"); err != nil {
+		return fmt.Errorf("locale-gen failed: %w", err)
 	}
-	echoCmd := fmt.Sprintf("echo 'LANG=%s' > /etc/locale.conf", locales[0])
-	_, err = inst.chrootExec("sh", "-c", echoCmd)
-	return err
+	logCh <- fmt.Sprintf("Setting LANG=%s...", locales[0])
+	return inst.chrootExecStream(logCh, "sh", "-c", fmt.Sprintf("echo 'LANG=%s' > /etc/locale.conf", locales[0]))
 }
 
 // setHostname sets the system hostname.
-func (inst *Installer) setHostname() error {
-	echoCmd := fmt.Sprintf("echo '%s' > /etc/hostname", inst.config.Hostname)
-	_, err := inst.chrootExec("sh", "-c", echoCmd)
-	return err
+func (inst *Installer) setHostname(logCh chan<- string) error {
+	logCh <- fmt.Sprintf("Setting hostname to %s...", inst.config.Hostname)
+	return inst.chrootExecStream(logCh, "sh", "-c", fmt.Sprintf("echo '%s' > /etc/hostname", inst.config.Hostname))
 }
 
 // configureNetwork sets up network configuration.
-func (inst *Installer) configureNetwork() error {
-	_, err := inst.chrootExec("systemctl", "enable", "systemd-networkd")
-	if err != nil {
+func (inst *Installer) configureNetwork(logCh chan<- string) error {
+	logCh <- "Enabling systemd-networkd..."
+	if err := inst.chrootExecStream(logCh, "systemctl", "enable", "systemd-networkd"); err != nil {
 		return err
 	}
-	_, err = inst.chrootExec("systemctl", "enable", "systemd-resolved")
-	return err
+	logCh <- "Enabling systemd-resolved..."
+	return inst.chrootExecStream(logCh, "systemctl", "enable", "systemd-resolved")
 }
 
 // setRootPassword sets the root password.
-func (inst *Installer) setRootPassword() error {
-	_, err := inst.chrootExec("sh", "-c",
+func (inst *Installer) setRootPassword(logCh chan<- string) error {
+	logCh <- "Setting root password..."
+	return inst.chrootExecStream(logCh, "sh", "-c",
 		fmt.Sprintf("echo 'root:%s' | chpasswd", inst.config.RootPassword))
-	return err
 }
 
 // createUser creates a sudo user if configured.
-func (inst *Installer) createUser() error {
+func (inst *Installer) createUser(logCh chan<- string) error {
 	if !inst.config.CreateUser || inst.config.UserName == "" {
+		logCh <- "Skipping user creation."
 		return nil
 	}
-	_, err := inst.chrootExec("useradd", "-m", "-G", "wheel", inst.config.UserName)
-	if err != nil {
-		return err
+	logCh <- fmt.Sprintf("Creating user %s...", inst.config.UserName)
+	if err := inst.chrootExecStream(logCh, "useradd", "-m", "-G", "wheel", inst.config.UserName); err != nil {
+		return fmt.Errorf("failed to create user: %w", err)
 	}
-	_, err = inst.chrootExec("sh", "-c",
-		fmt.Sprintf("echo '%s:%s' | chpasswd", inst.config.UserName, inst.config.UserPassword))
-	if err != nil {
-		return err
+	if err := inst.chrootExecStream(logCh, "sh", "-c",
+		fmt.Sprintf("echo '%s:%s' | chpasswd", inst.config.UserName, inst.config.UserPassword)); err != nil {
+		return fmt.Errorf("failed to set user password: %w", err)
 	}
-	_, err = inst.chrootExec("sed", "-i", "s/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/", "/etc/sudoers")
-	return err
+	logCh <- "Granting sudo access..."
+	return inst.chrootExecStream(logCh, "sed", "-i", "s/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/", "/etc/sudoers")
 }
 
 // installBootloader installs the bootloader.
-func (inst *Installer) installBootloader() error {
+func (inst *Installer) installBootloader(logCh chan<- string) error {
 	switch inst.config.BootloaderType {
 	case "grub":
+		logCh <- "Installing GRUB bootloader..."
 		if inst.config.UEFIMode {
-			_, err := inst.chrootExec("grub-install", "--target=x86_64-efi", "--efi-directory=/boot", "--bootloader-id=GRUB")
-			if err != nil {
-				return err
+			logCh <- "UEFI mode detected, installing GRUB for x86_64-efi..."
+			// Mount efivarfs (optional, may fail on non-UEFI)
+			_ = streamExec(logCh, "mount", "-t", "efivarfs", "efivarfs", "/sys/firmware/efi/efivars")
+
+			// Install GRUB to the ESP mounted at /boot inside chroot
+			if err := inst.chrootExecStream(logCh, "grub-install", "--target=x86_64-efi", "--efi-directory=/boot", "--bootloader-id=GRUB"); err != nil {
+				return fmt.Errorf("grub-install failed: %w", err)
 			}
 		} else {
-			_, err := inst.chrootExec("grub-install", inst.config.DiskDevice)
-			if err != nil {
-				return err
+			logCh <- "BIOS mode detected, installing GRUB to MBR..."
+			if err := inst.chrootExecStream(logCh, "grub-install", inst.config.DiskDevice); err != nil {
+				return fmt.Errorf("grub-install failed: %w", err)
 			}
 		}
-		_, err := inst.chrootExec("grub-mkconfig", "-o", "/boot/grub/grub.cfg")
-		return err
-	case "systemd-boot":
-		if inst.config.UEFIMode {
-			_, err := inst.chrootExec("bootctl", "install")
-			return err
+		logCh <- "Generating GRUB configuration..."
+		if err := inst.chrootExecStream(logCh, "grub-mkconfig", "-o", "/boot/grub/grub.cfg"); err != nil {
+			return fmt.Errorf("grub-mkconfig failed: %w", err)
 		}
-		return fmt.Errorf("systemd-boot requires UEFI mode")
+		logCh <- "GRUB installed successfully."
+
+	case "systemd-boot":
+		if !inst.config.UEFIMode {
+			return fmt.Errorf("systemd-boot requires UEFI mode")
+		}
+		logCh <- "Installing systemd-boot..."
+		if err := inst.chrootExecStream(logCh, "bootctl", "install"); err != nil {
+			return fmt.Errorf("bootctl install failed: %w", err)
+		}
+		logCh <- "systemd-boot installed successfully."
 	}
 	return nil
 }
 
 // configureSSH sets up OpenSSH server.
-func (inst *Installer) configureSSH() error {
+func (inst *Installer) configureSSH(logCh chan<- string) error {
 	if !inst.config.EnableSSH {
+		logCh <- "SSH is disabled, skipping."
 		return nil
 	}
-	_, err := inst.chrootExec("systemctl", "enable", "sshd")
-	if err != nil {
+	logCh <- "Enabling sshd service..."
+	if err := inst.chrootExecStream(logCh, "systemctl", "enable", "sshd"); err != nil {
 		return err
 	}
 	if inst.config.SSHPort != 22 {
-		portStr := fmt.Sprintf("Port %d", inst.config.SSHPort)
-		_, err = inst.chrootExec("sh", "-c",
-			fmt.Sprintf("echo '%s' >> /etc/ssh/sshd_config", portStr))
-		if err != nil {
+		logCh <- fmt.Sprintf("Setting SSH port to %d...", inst.config.SSHPort)
+		if err := inst.chrootExecStream(logCh, "sh", "-c",
+			fmt.Sprintf("echo 'Port %d' >> /etc/ssh/sshd_config", inst.config.SSHPort)); err != nil {
 			return err
 		}
 	}
+	rootLogin := "yes"
 	if !inst.config.AllowRootLogin {
-		_, err = inst.chrootExec("sed", "-i",
-			"s/^#PermitRootLogin.*/PermitRootLogin no/", "/etc/ssh/sshd_config")
-		return err
+		rootLogin = "no"
 	}
-	_, err = inst.chrootExec("sed", "-i",
-		"s/^#PermitRootLogin.*/PermitRootLogin yes/", "/etc/ssh/sshd_config")
-	return err
+	logCh <- fmt.Sprintf("Setting PermitRootLogin to %s...", rootLogin)
+	return inst.chrootExecStream(logCh, "sed", "-i",
+		fmt.Sprintf("s/^#PermitRootLogin.*/PermitRootLogin %s/", rootLogin), "/etc/ssh/sshd_config")
 }
 
 // installPackages installs additional packages.
-func (inst *Installer) installPackages() error {
+func (inst *Installer) installPackages(logCh chan<- string) error {
 	var packages []string
 	if inst.config.InstallDocker {
 		packages = append(packages, "docker")
@@ -442,23 +545,42 @@ func (inst *Installer) installPackages() error {
 	}
 
 	if len(packages) == 0 {
+		logCh <- "No additional packages selected."
 		return nil
 	}
+
+	logCh <- fmt.Sprintf("Installing %d additional package(s)...", len(packages))
+	logCh <- "Packages: " + strings.Join(packages, ", ")
+	logCh <- "This may take a while..."
+
 	args := append([]string{"-S", "--noconfirm"}, packages...)
-	_, err := inst.chrootExec(args...)
-	return err
+	if err := inst.chrootExecStream(logCh, args...); err != nil {
+		return fmt.Errorf("failed to install packages: %w", err)
+	}
+	logCh <- "Additional packages installed."
+	return nil
 }
 
 // finalize performs cleanup and final steps.
-func (inst *Installer) finalize() error {
-	_, err := inst.chrootExec("systemctl", "enable", "systemd-timesyncd")
-	if err != nil {
+func (inst *Installer) finalize(logCh chan<- string) error {
+	logCh <- "Enabling systemd-timesyncd..."
+	if err := inst.chrootExecStream(logCh, "systemctl", "enable", "systemd-timesyncd"); err != nil {
 		return err
 	}
+
 	if inst.config.EnableArchCN && inst.config.ArchCNMirror != "" {
+		logCh <- fmt.Sprintf("Adding Arch Linux CN repository from %s...", inst.config.ArchCNMirror)
 		repoLine := fmt.Sprintf("\n[archlinuxcn]\nServer = %s/$arch\n", inst.config.ArchCNMirror)
-		_, err = inst.chrootExec("sh", "-c",
-			fmt.Sprintf("echo '%s' >> /etc/pacman.conf", repoLine))
+		if err := inst.chrootExecStream(logCh, "sh", "-c",
+			fmt.Sprintf("echo '%s' >> /etc/pacman.conf", repoLine)); err != nil {
+			return err
+		}
 	}
-	return err
+
+	logCh <- "Syncing disks..."
+	if err := streamExec(logCh, "sync"); err != nil {
+		return err
+	}
+	logCh <- "Installation complete! You can now reboot."
+	return nil
 }

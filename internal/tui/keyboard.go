@@ -13,6 +13,7 @@ type KeyboardModel struct {
 	scroll  int
 	layouts []string
 	Next    bool
+	GoBack  bool
 }
 
 const kbViewportHeight = 10
@@ -29,6 +30,11 @@ func NewKeyboardModel(config *model.Config) KeyboardModel {
 
 func (m KeyboardModel) Init() tea.Cmd { return nil }
 
+// itemCount returns layouts + Next + Back
+func (m KeyboardModel) totalItems() int {
+	return len(m.layouts) + 2 // 2 for Next, Back
+}
+
 func (m KeyboardModel) Update(msg tea.Msg) (KeyboardModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -36,20 +42,27 @@ func (m KeyboardModel) Update(msg tea.Msg) (KeyboardModel, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				if m.cursor < m.scroll {
+				if m.cursor < len(m.layouts) && m.cursor < m.scroll {
 					m.scroll--
 				}
 			}
 		case "down", "j":
-			if m.cursor < len(m.layouts)-1 {
+			if m.cursor < m.totalItems()-1 {
 				m.cursor++
-				if m.cursor >= m.scroll+kbViewportHeight {
+				if m.cursor < len(m.layouts) && m.cursor >= m.scroll+kbViewportHeight {
 					m.scroll++
 				}
 			}
 		case "enter":
-			m.config.KeyboardLayout = m.layouts[m.cursor]
-			m.Next = true
+			total := m.totalItems()
+			if m.cursor == total-2 { // Next button
+				m.config.KeyboardLayout = m.layouts[m.cursor]
+				m.Next = true
+			} else if m.cursor == total-1 { // Back button
+				m.GoBack = true
+			} else if m.cursor < len(m.layouts) {
+				m.config.KeyboardLayout = m.layouts[m.cursor]
+			}
 		}
 	}
 	return m, nil
@@ -57,9 +70,8 @@ func (m KeyboardModel) Update(msg tea.Msg) (KeyboardModel, tea.Cmd) {
 
 func (m KeyboardModel) View() string {
 	title := TitleStyle.Render("Keyboard Layout")
-	subtitle := SubtitleStyle.Render("Select your keyboard layout using ↑/↓, press ENTER to confirm.")
+	subtitle := SubtitleStyle.Render("↑/↓ to select, ENTER on [Next] to confirm.")
 
-	// Scroll indicator
 	total := len(m.layouts)
 	end := m.scroll + kbViewportHeight
 	if end > total {
@@ -80,5 +92,24 @@ func (m KeyboardModel) View() string {
 		items += ListItem(idx == m.cursor, sel, RadioButton(sel, layout)) + "\n"
 	}
 
+	// Render nav buttons
+	items += "\n" + renderNavButtons(m.cursor, total, total+1)
+
 	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", scrollInfo, "", BoxStyle.Render(items))
+}
+
+// renderNavButtons shows Back/Next as cursor-selectable items.
+func renderNavButtons(cursor, nextIdx, backIdx int) string {
+	var items string
+	if cursor == nextIdx {
+		items += lipgloss.NewStyle().Background(ColorPrimary).Foreground(ColorWhite).Bold(true).Padding(0, 4).Render(" [ Next ▶ ] ") + "\n"
+	} else {
+		items += lipgloss.NewStyle().Background(ColorDark).Foreground(ColorPrimary).Padding(0, 4).Render(" [ Next ▶ ] ") + "\n"
+	}
+	if cursor == backIdx {
+		items += lipgloss.NewStyle().Background(ColorAccent).Foreground(ColorWhite).Bold(true).Padding(0, 4).Render(" [ ◀ Back ] ")
+	} else {
+		items += lipgloss.NewStyle().Background(ColorDark).Foreground(ColorAccent).Padding(0, 4).Render(" [ ◀ Back ] ")
+	}
+	return items
 }

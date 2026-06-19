@@ -13,6 +13,7 @@ import (
 type NetworkModel struct {
 	config      *model.Config
 	Next        bool
+	GoBack      bool
 	focusIndex  int
 	dhcpToggle  bool
 	inputs      []textinput.Model

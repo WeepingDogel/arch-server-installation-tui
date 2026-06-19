@@ -10,6 +10,7 @@ import (
 type WelcomeModel struct {
 	config *model.Config
 	Next   bool
+	GoBack bool
 }
 
 // NewWelcomeModel creates the welcome screen.
@@ -23,7 +24,7 @@ func (m WelcomeModel) Update(msg tea.Msg) (WelcomeModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "enter", "tab":
+		case "enter":
 			m.Next = true
 		}
 	}
@@ -32,7 +33,6 @@ func (m WelcomeModel) Update(msg tea.Msg) (WelcomeModel, tea.Cmd) {
 
 func (m WelcomeModel) View() string {
 	banner := WelcomeBanner()
-
 	info := InfoBox("This tool will guide you through installing Arch Linux as a production-ready server.\n" +
 		"Configure keyboard, network, disks, packages, and more step by step.")
 

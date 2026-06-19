@@ -17,6 +17,7 @@ type TimezoneModel struct {
 	regions []string
 	locales []string
 	Next    bool
+	GoBack  bool
 	scroll  int // scroll offset for low-resolution
 }
 

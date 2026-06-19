@@ -18,6 +18,7 @@ type DiskModel struct {
 	diskSizes map[string]string
 	subStep   int // 0=disk select, 1=partition scheme, 2=partition mode
 	Next      bool
+	GoBack    bool
 }
 
 // NewDiskModel creates the disk selection screen with detected disks.

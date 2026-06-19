@@ -21,6 +21,7 @@ type MirrorModel struct {
 	enableArchCN bool
 	focusBottom  bool // false=mirror list, true=Arch CN toggle
 	Next         bool
+	GoBack       bool
 }
 
 const viewportHeight = 10

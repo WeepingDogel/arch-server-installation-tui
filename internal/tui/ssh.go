@@ -13,6 +13,7 @@ import (
 type SSHModel struct {
 	config     *model.Config
 	Next       bool
+	GoBack     bool
 	focusIndex int
 	inputs     []textinput.Model
 }
