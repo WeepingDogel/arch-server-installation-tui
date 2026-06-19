@@ -7,20 +7,24 @@ type Config struct {
 	KeyboardLayout string
 
 	// Network
-	NetworkDHCP bool
-	Hostname    string
-	IPAddress   string
-	Netmask     string
-	Gateway     string
-	DNSServers  string
+	NetworkDHCP  bool
+	Hostname     string
+	IPAddress    string
+	Netmask      string
+	Gateway      string
+	DNSServers   string
+	NetworkIface string // detected interface name
 
 	// Mirror
 	MirrorURL     string
 	MirrorCountry string
 	CustomMirror  string // Custom mirror URL input
+	EnableArchCN  bool   // Toggle Arch Linux CN repository
+	ArchCNMirror  string // Arch Linux CN mirror URL
 
 	// Disk
 	DiskDevice          string
+	DiskSize            string // detected size
 	UseAutoPartitioning bool
 	RootPartitionSize   string // e.g., "20G" or "100%"
 	EncryptDisk         bool
@@ -36,7 +40,7 @@ type Config struct {
 	// Timezone & Locale
 	TimezoneRegion string
 	TimezoneCity   string
-	Locale         string
+	Locales        []string // multiple locales supported
 
 	// Users
 	RootPassword string
@@ -84,7 +88,7 @@ func DefaultConfig() *Config {
 		FilesystemType:      "ext4",
 		BootloaderType:      "grub",
 		UEFIMode:            true,
-		Locale:              "en_US.UTF-8",
+		Locales:             []string{"en_US.UTF-8"},
 		TimezoneRegion:      "UTC",
 		TimezoneCity:        "",
 		KernelType:          "linux",
@@ -93,6 +97,8 @@ func DefaultConfig() *Config {
 		SSHPort:             22,
 		AllowRootLogin:      false,
 		InstallBaseDev:      false,
+		EnableArchCN:        false,
+		ArchCNMirror:        "https://mirrors.tuna.tsinghua.edu.cn/archlinuxcn",
 	}
 }
 
@@ -115,7 +121,6 @@ func ValidateIP(ip string) bool {
 	if ip == "" {
 		return false
 	}
-	// Simple validation: count dots and check segments
 	segments := 0
 	current := 0
 	digitCount := 0

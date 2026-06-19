@@ -29,17 +29,6 @@ func NewUsersModel(config *model.Config) UsersModel {
 	return m
 }
 
-func newPasswordInput(placeholder, value string) textinput.Model {
-	ti := textinput.New()
-	ti.Placeholder = placeholder
-	ti.SetValue(value)
-	ti.Width = 50
-	ti.EchoMode = textinput.EchoPassword
-	ti.EchoCharacter = '•'
-	ti.TextStyle = InputStyle
-	return ti
-}
-
 func (m UsersModel) Init() tea.Cmd {
 	return textinput.Blink
 }

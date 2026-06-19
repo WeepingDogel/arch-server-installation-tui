@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -83,6 +84,28 @@ func InfoBox(msg string) string {
 		Foreground(ColorAccent).
 		Italic(true).
 		Render("ℹ " + msg)
+}
+
+// newTextInput creates a text input with consistent styling.
+func newTextInput(placeholder, value string) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.SetValue(value)
+	ti.Width = 50
+	ti.TextStyle = InputStyle
+	return ti
+}
+
+// newPasswordInput creates a password text input with consistent styling.
+func newPasswordInput(placeholder, value string) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.SetValue(value)
+	ti.Width = 50
+	ti.EchoMode = textinput.EchoPassword
+	ti.EchoCharacter = '•'
+	ti.TextStyle = InputStyle
+	return ti
 }
 
 // CheckBox returns a styled checkbox for the given state.

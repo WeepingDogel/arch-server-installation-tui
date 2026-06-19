@@ -9,7 +9,6 @@ import (
 )
 
 // Installer handles the actual Arch Linux installation process.
-// It reads configuration from model.Config and executes system commands.
 type Installer struct {
 	config *model.Config
 }
@@ -27,7 +26,6 @@ type Result struct {
 }
 
 // Install runs the full installation pipeline and sends progress updates.
-// This is designed to be called from a goroutine.
 func (inst *Installer) Install(progress chan<- ProgressUpdate) {
 	defer close(progress)
 
@@ -104,21 +102,9 @@ func (inst *Installer) chrootExec(args ...string) (string, error) {
 	return safeExec(cmd[0], cmd[1:]...)
 }
 
-// partitionDisk creates partitions on the target disk.
-func (inst *Installer) partitionDisk() error {
-	// This would use parted or fdisk to partition the disk
-	return nil
-}
-
-// formatFilesystems formats the created partitions.
-func (inst *Installer) formatFilesystems() error {
-	return nil
-}
-
-// mountPartitions mounts filesystems to /mnt.
-func (inst *Installer) mountPartitions() error {
-	return nil
-}
+func (inst *Installer) partitionDisk() error     { return nil }
+func (inst *Installer) formatFilesystems() error { return nil }
+func (inst *Installer) mountPartitions() error   { return nil }
 
 // pacstrapBase installs the base system using pacstrap.
 func (inst *Installer) pacstrapBase() error {
@@ -159,23 +145,27 @@ func (inst *Installer) configureTimezone() error {
 	return err
 }
 
-// configureLocale sets up locale configuration.
+// configureLocale sets up locale configuration (supports multiple locales).
 func (inst *Installer) configureLocale() error {
-	locale := inst.config.Locale
-	if locale == "" {
-		locale = "en_US.UTF-8"
+	locales := inst.config.Locales
+	if len(locales) == 0 {
+		locales = []string{"en_US.UTF-8"}
 	}
-	// Uncomment the locale in locale.gen
-	_, err := inst.chrootExec("sed", "-i", fmt.Sprintf("s/^#%s/%s/", locale, locale), "/etc/locale.gen")
+
+	for _, locale := range locales {
+		// Uncomment the locale in locale.gen
+		_, err := inst.chrootExec("sed", "-i", fmt.Sprintf("s/^#%s/%s/", locale, locale), "/etc/locale.gen")
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err := inst.chrootExec("locale-gen")
 	if err != nil {
 		return err
 	}
-	_, err = inst.chrootExec("locale-gen")
-	if err != nil {
-		return err
-	}
-	// Set LANG
-	echoCmd := fmt.Sprintf("echo 'LANG=%s' > /etc/locale.conf", locale)
+	// Set LANG to the first locale
+	echoCmd := fmt.Sprintf("echo 'LANG=%s' > /etc/locale.conf", locales[0])
 	_, err = inst.chrootExec("sh", "-c", echoCmd)
 	return err
 }
@@ -189,7 +179,6 @@ func (inst *Installer) setHostname() error {
 
 // configureNetwork sets up network configuration.
 func (inst *Installer) configureNetwork() error {
-	// Enable systemd-networkd and systemd-resolved
 	_, err := inst.chrootExec("systemctl", "enable", "systemd-networkd")
 	if err != nil {
 		return err
@@ -200,7 +189,6 @@ func (inst *Installer) configureNetwork() error {
 
 // setRootPassword sets the root password.
 func (inst *Installer) setRootPassword() error {
-	// Use chroot and passwd with stdin
 	_, err := inst.chrootExec("sh", "-c",
 		fmt.Sprintf("echo 'root:%s' | chpasswd", inst.config.RootPassword))
 	return err
@@ -220,7 +208,6 @@ func (inst *Installer) createUser() error {
 	if err != nil {
 		return err
 	}
-	// Uncomment %wheel ALL=(ALL:ALL) ALL in sudoers
 	_, err = inst.chrootExec("sed", "-i", "s/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/", "/etc/sudoers")
 	return err
 }
@@ -257,12 +244,10 @@ func (inst *Installer) configureSSH() error {
 	if !inst.config.EnableSSH {
 		return nil
 	}
-	// Enable sshd service
 	_, err := inst.chrootExec("systemctl", "enable", "sshd")
 	if err != nil {
 		return err
 	}
-	// Configure SSH port
 	if inst.config.SSHPort != 22 {
 		portStr := fmt.Sprintf("Port %d", inst.config.SSHPort)
 		_, err = inst.chrootExec("sh", "-c",
@@ -271,7 +256,6 @@ func (inst *Installer) configureSSH() error {
 			return err
 		}
 	}
-	// Configure root login
 	if !inst.config.AllowRootLogin {
 		_, err = inst.chrootExec("sed", "-i",
 			"s/^#PermitRootLogin.*/PermitRootLogin no/", "/etc/ssh/sshd_config")
@@ -285,7 +269,6 @@ func (inst *Installer) configureSSH() error {
 // installPackages installs additional packages.
 func (inst *Installer) installPackages() error {
 	var packages []string
-
 	if inst.config.InstallDocker {
 		packages = append(packages, "docker")
 	}
@@ -317,11 +300,13 @@ func (inst *Installer) installPackages() error {
 		extra := strings.Fields(inst.config.CustomPackages)
 		packages = append(packages, extra...)
 	}
+	if inst.config.EnableArchCN {
+		packages = append(packages, "archlinuxcn-keyring")
+	}
 
 	if len(packages) == 0 {
 		return nil
 	}
-
 	args := append([]string{"-S", "--noconfirm"}, packages...)
 	_, err := inst.chrootExec(args...)
 	return err
@@ -329,7 +314,15 @@ func (inst *Installer) installPackages() error {
 
 // finalize performs cleanup and final steps.
 func (inst *Installer) finalize() error {
-	// Enable useful services
 	_, err := inst.chrootExec("systemctl", "enable", "systemd-timesyncd")
+	if err != nil {
+		return err
+	}
+	// Add Arch Linux CN repository if enabled
+	if inst.config.EnableArchCN && inst.config.ArchCNMirror != "" {
+		repoLine := fmt.Sprintf("\n[archlinuxcn]\nServer = %s/$arch\n", inst.config.ArchCNMirror)
+		_, err = inst.chrootExec("sh", "-c",
+			fmt.Sprintf("echo '%s' >> /etc/pacman.conf", repoLine))
+	}
 	return err
 }

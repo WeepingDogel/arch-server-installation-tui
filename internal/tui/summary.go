@@ -2,7 +2,7 @@ package tui
 
 import (
 	"fmt"
-	"strconv"
+	"strings"
 
 	"github.com/WeepingDogel/arch-server-installation-tui/internal/model"
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,7 +34,7 @@ func (m SummaryModel) Update(msg tea.Msg) (SummaryModel, tea.Cmd) {
 			if m.cursor == 0 {
 				m.Confirmed = true
 			} else {
-				m.Next = true // Go back to edit
+				m.Next = true
 			}
 		case "tab":
 			m.Confirmed = true
@@ -49,7 +49,12 @@ func (m SummaryModel) View() string {
 	title := TitleStyle.Render("Installation Summary")
 	subtitle := SubtitleStyle.Render("Review your configuration before installation.")
 
-	// Build summary sections
+	// Locale display
+	localeStr := "en_US.UTF-8"
+	if len(m.config.Locales) > 0 {
+		localeStr = strings.Join(m.config.Locales, ", ")
+	}
+
 	sections := []struct {
 		name  string
 		items []string
@@ -60,25 +65,27 @@ func (m SummaryModel) View() string {
 				fmt.Sprintf("Keyboard Layout: %s", m.config.KeyboardLayout),
 				fmt.Sprintf("Hostname: %s", m.config.Hostname),
 				fmt.Sprintf("Timezone: %s", m.config.TimezoneRegion),
-				fmt.Sprintf("Locale: %s", m.config.Locale),
+				fmt.Sprintf("Locales: %s", localeStr),
 			},
 		},
 		{
 			name: "Network",
 			items: []string{
+				fmt.Sprintf("Interface: %s", ifElse(m.config.NetworkIface != "", m.config.NetworkIface, "auto")),
 				fmt.Sprintf("Mode: %s", boolStr(m.config.NetworkDHCP, "DHCP", "Static")),
 			},
 		},
 		{
 			name: "Mirror",
 			items: []string{
-				fmt.Sprintf("Mirror: %s", m.config.MirrorURL),
+				fmt.Sprintf("Main Mirror: %s", m.config.MirrorURL),
+				fmt.Sprintf("Arch Linux CN: %s", boolStr(m.config.EnableArchCN, "Enabled", "Disabled")),
 			},
 		},
 		{
 			name: "Storage",
 			items: []string{
-				fmt.Sprintf("Disk: %s", m.config.DiskDevice),
+				fmt.Sprintf("Disk: %s (%s)", m.config.DiskDevice, m.config.DiskSize),
 				fmt.Sprintf("Filesystem: %s", m.config.FilesystemType),
 				fmt.Sprintf("Bootloader: %s (%s)", m.config.BootloaderType, bootModeStr(m.config.UEFIMode)),
 			},
@@ -130,7 +137,6 @@ func (m SummaryModel) View() string {
 		Bold(true).
 		Render("⚠  WARNING: This will erase all data on " + m.config.DiskDevice + "!")
 
-	// Confirm/Back buttons
 	var confirmBtn string
 	if m.cursor == 0 {
 		confirmBtn = ButtonStyle.Render("▶ Start Installation")
@@ -198,6 +204,3 @@ func packageLine(enabled bool, name string) string {
 	}
 	return lipgloss.NewStyle().Foreground(ColorGray).Render("○ " + name)
 }
-
-// Ensure strconv import is used (for SSH port)
-var _ = strconv.Itoa
