@@ -327,26 +327,7 @@ func (m *RootModel) validateStep() error {
 	return nil
 }
 
-// clearNextMsg resets the Next flag on all step models.
-func (m *RootModel) clearNextMsg() {
-	m.welcome.Next = false
-	m.keyboard.Next = false
-	m.network.Next = false
-	m.mirror.Next = false
-	m.disk.Next = false
-	m.filesystem.Next = false
-	m.bootloader.Next = false
-	m.timezone.Next = false
-	m.users.Next = false
-	m.ssh.Next = false
-	m.packages.Next = false
-	m.summary.Next = false
-}
-
-// Message types used by sub-models
-type nextMsg struct{}
-type backMsg struct{}
-type startInstallMsg struct{}
+// installProgressMsg is sent by the installer to update the UI.
 type installProgressMsg struct {
 	Percent float64
 	Message string
