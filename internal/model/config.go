@@ -7,12 +7,12 @@ type Config struct {
 	KeyboardLayout string
 
 	// Network
-	NetworkDHCP  bool
-	Hostname     string
-	IPAddress    string
-	Netmask      string
-	Gateway      string
-	DNSServers   string
+	NetworkDHCP bool
+	Hostname    string
+	IPAddress   string
+	Netmask     string
+	Gateway     string
+	DNSServers  string
 
 	// Mirror
 	MirrorURL     string
@@ -20,11 +20,11 @@ type Config struct {
 	CustomMirror  string // Custom mirror URL input
 
 	// Disk
-	DiskDevice             string
-	UseAutoPartitioning    bool
-	RootPartitionSize      string // e.g., "20G" or "100%"
-	EncryptDisk            bool
-	LVMEnabled             bool
+	DiskDevice          string
+	UseAutoPartitioning bool
+	RootPartitionSize   string // e.g., "20G" or "100%"
+	EncryptDisk         bool
+	LVMEnabled          bool
 
 	// Filesystem
 	FilesystemType string // ext4, btrfs, xfs, f2fs
@@ -45,11 +45,11 @@ type Config struct {
 	CreateUser   bool
 
 	// SSH
-	EnableSSH          bool
-	SSHPort            int
-	AllowRootLogin     bool
-	ImportSSHKeys      bool
-	SSHAuthorizedKeys  string
+	EnableSSH         bool
+	SSHPort           int
+	AllowRootLogin    bool
+	ImportSSHKeys     bool
+	SSHAuthorizedKeys string
 
 	// Packages
 	KernelType      string // linux, linux-lts, linux-zen, linux-hardened
@@ -66,33 +66,33 @@ type Config struct {
 	CustomPackages  string // Space-separated extra packages
 
 	// Installation state
-	InstallStarted      bool
-	InstallComplete     bool
-	InstallError        string
-	ProgressPercent     float64
-	ProgressMessage     string
+	InstallStarted  bool
+	InstallComplete bool
+	InstallError    string
+	ProgressPercent float64
+	ProgressMessage string
 }
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		KeyboardLayout:   "us",
-		NetworkDHCP:      true,
-		Hostname:         "arch-server",
-		MirrorCountry:    "auto",
+		KeyboardLayout:      "us",
+		NetworkDHCP:         true,
+		Hostname:            "arch-server",
+		MirrorCountry:       "auto",
 		UseAutoPartitioning: true,
-		FilesystemType:   "ext4",
-		BootloaderType:   "grub",
-		UEFIMode:         true,
-		Locale:           "en_US.UTF-8",
-		TimezoneRegion:   "UTC",
-		TimezoneCity:     "",
-		KernelType:       "linux",
-		CreateUser:       true,
-		EnableSSH:        true,
-		SSHPort:          22,
-		AllowRootLogin:   false,
-		InstallBaseDev:   false,
+		FilesystemType:      "ext4",
+		BootloaderType:      "grub",
+		UEFIMode:            true,
+		Locale:              "en_US.UTF-8",
+		TimezoneRegion:      "UTC",
+		TimezoneCity:        "",
+		KernelType:          "linux",
+		CreateUser:          true,
+		EnableSSH:           true,
+		SSHPort:             22,
+		AllowRootLogin:      false,
+		InstallBaseDev:      false,
 	}
 }
 

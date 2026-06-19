@@ -11,11 +11,10 @@ import (
 
 // InstallModel shows the installation progress.
 type InstallModel struct {
-	config         *model.Config
-	spinnerFrame   int
-	completed      bool
-	err            error
-	currentStep    int
+	config       *model.Config
+	spinnerFrame int
+	completed    bool
+	currentStep  int
 }
 
 // Installation steps shown during the process.
@@ -75,6 +74,7 @@ func (m InstallModel) Update(msg tea.Msg) (InstallModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case installProgressMsg:
 		m.currentStep++
+		m.spinnerFrame = (m.spinnerFrame + 1) % 10
 		m.config.ProgressPercent = msg.Percent
 		m.config.ProgressMessage = msg.Message
 
@@ -128,7 +128,6 @@ func (m InstallModel) inProgressView() string {
 	// Spinner animation
 	spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	spinner := spinnerFrames[m.spinnerFrame]
-	m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
 
 	spinnerView := lipgloss.NewStyle().
 		Foreground(ColorPrimary).

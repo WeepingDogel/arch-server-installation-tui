@@ -16,7 +16,7 @@ Thank you for considering contributing! This project aims to provide a polished,
 
 ### Code Style
 
-- Run `gofmt` before committing — standard Go formatting is enforced
+- **Run `gofmt -w` after every edit** — Use `gofmt -w $(find . -name "*.go" -not -path "./vendor/*")` to format all files. CI lint will reject unformatted code.
 - All exported types and functions must have Go-style doc comments
 - Keep functions focused and small — each step model should handle only its own logic
 - Use table-driven tests for validation functions
@@ -46,12 +46,11 @@ The GitHub Actions workflow runs:
 
 - **Lint** — `golangci-lint` (PRs only)
 - **Test** — `go test -race` (PRs only)
-- **Security** — `govulncheck` (PRs only, non-blocking)
-- **Build** — cross-compile for linux/amd64 + linux/arm64 (PRs and push)
+- **Build** — cross-compile for linux/amd64 + linux/arm64 (push to main or manual dispatch)
 
 ## Pull Request Process
 
-1. Ensure all CI checks pass (lint, test, build)
+1. Ensure all CI checks pass (lint, test)
 2. Update README.md if your change affects the UI, configuration, or workflow
 3. Keep PRs focused on a single concern
 4. Reference any related issues

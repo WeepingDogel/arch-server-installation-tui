@@ -9,12 +9,12 @@ import (
 
 // NetworkModel handles network configuration.
 type NetworkModel struct {
-	config      *model.Config
-	Next        bool
-	focusIndex  int
-	dhcpToggle  bool // true = DHCP, false = Static
-	inputs      []textinput.Model
-	showStatic  bool
+	config     *model.Config
+	Next       bool
+	focusIndex int
+	dhcpToggle bool // true = DHCP, false = Static
+	inputs     []textinput.Model
+	showStatic bool
 }
 
 // NewNetworkModel creates the network configuration screen.

@@ -10,7 +10,6 @@ import (
 type WelcomeModel struct {
 	config *model.Config
 	Next   bool
-	ready  bool
 }
 
 // NewWelcomeModel creates the welcome screen.

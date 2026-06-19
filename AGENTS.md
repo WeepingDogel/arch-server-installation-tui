@@ -18,7 +18,8 @@ arch-server-installation-tui/
 │   │   ├── layout.go         # Screen layout helpers
 │   │   └── *.go             # Step 1-13 models
 │   ├── installer/installer.go  # Real installation pipeline
-│   └── mirror/mirrors.go       # Mirror definitions + filters
+│   ├── mirror/mirrors.go       # Mirror definitions + filters
+│   └── utils/                  # Utility packages (env, exec, validate)
 ├── .github/workflows/ci.yml    # GitHub Actions CI/CD
 ├── .golangci.yml               # Linter config
 ├── go.mod / go.sum
@@ -55,6 +56,7 @@ The root model (`root.go`) delegates `Update`/`View` to the current step model b
 3. **Theme is global** — `theme.go` exports all Lip Gloss styles as package-level vars
 4. **No external deps beyond Bubble Tea ecosystem** — Uses only `bubbletea`, `lipgloss`, `bubbles`
 5. **Step numbering** — Steps are 1-based: 1=Welcome ... 13=Install
+6. **Always run `gofmt -w` after editing code** — Any modification to `.go` files must be followed by `gofmt -w` on all files to ensure consistent formatting. CI lint will reject unformatted code.
 
 ## Step Flow
 
@@ -66,7 +68,8 @@ The root model (`root.go`) delegates `Update`/`View` to the current step model b
 
 ## Code Style
 
-- Standard Go formatting (`gofmt`)
+- **`gofmt -w` after every edit** — Run `gofmt -w $(find . -name "*.go" -not -path "./vendor/*")` after any code change
+- Standard Go formatting (`gofmt`) enforced by CI lint
 - Error handling: validate at step transition, show errors in UI footer
 - Tests: `model/config_test.go` with table-driven tests
 - Go 1.22 minimum
@@ -74,6 +77,12 @@ The root model (`root.go`) delegates `Update`/`View` to the current step model b
 
 ## CI/CD
 
-- Lint + test + security scan run on PRs only
-- Build runs on both PRs and push to main/develop
-- Security scan uses `continue-on-error`
+- Lint + Test run on PRs only
+- Build runs on push to main and manual `workflow_dispatch`
+- Release builds on tag publish
+
+## Utility Packages
+
+- `internal/utils/env.go` — Environment detection (Arch ISO, internet, disks, memory)
+- `internal/utils/exec.go` — Safe command execution wrappers
+- `internal/utils/validate.go` — Input validation (hostname, IP, port, password)
