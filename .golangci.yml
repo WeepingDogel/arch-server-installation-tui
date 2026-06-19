@@ -1,0 +1,27 @@
+version: "2"
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - misspell
+    - revive
+    - gosec
+
+  settings:
+    staticcheck:
+      checks: ["all"]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
