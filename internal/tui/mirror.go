@@ -61,9 +61,7 @@ func (m MirrorModel) Update(msg tea.Msg) (MirrorModel, tea.Cmd) {
 				}
 			}
 		case "down", "j":
-			if m.focusBottom {
-				// Already at bottom, stay
-			} else if m.cursor < len(m.filtered)-1 {
+			if !m.focusBottom && m.cursor < len(m.filtered)-1 {
 				m.cursor++
 				if m.cursor >= m.scroll+viewportHeight {
 					m.scroll++
