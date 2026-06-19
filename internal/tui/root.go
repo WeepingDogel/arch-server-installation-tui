@@ -33,7 +33,8 @@ type RootModel struct {
 	width  int
 	height int
 
-	err error
+	navFocus int // 0=Back button, 1=Next button
+	err      error
 }
 
 // New creates the root model with default configuration.
@@ -79,9 +80,22 @@ func (m *RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 
+		case "left":
+			if m.step > 1 {
+				m.navFocus = 0
+			}
+			return m, nil
+
+		case "right":
+			if m.step < TotalSteps {
+				m.navFocus = 1
+			}
+			return m, nil
+
 		case "esc":
 			if m.step > 1 {
 				m.step--
+				m.navFocus = 1
 			}
 			return m, nil
 		}
@@ -290,7 +304,7 @@ func (m *RootModel) View() string {
 		errMsg = ErrorBox(m.err.Error())
 	}
 
-	screen := Screen(m.step, content, SimpleFooter())
+	screen := Screen(m.step, content, SimpleFooter(), m.navFocus)
 
 	if errMsg != "" {
 		screen = lipgloss.JoinVertical(lipgloss.Top, screen, "", errMsg)
@@ -342,8 +356,9 @@ func (m *RootModel) validateStep() error {
 
 // installProgressMsg is sent by the installer to update the UI.
 type installProgressMsg struct {
-	Percent float64
-	Message string
-	Done    bool
-	Err     error
+	Percent   float64
+	Message   string
+	LogOutput string
+	Done      bool
+	Err       error
 }

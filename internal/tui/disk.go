@@ -15,9 +15,13 @@ type DiskModel struct {
 	config    *model.Config
 	cursor    int
 	disks     []string
-	diskSizes map[string]string // device -> size
+	diskSizes map[string]string
+	subStep   int // 0=disk select, 1=partition scheme, 2=partition mode
 	Next      bool
+	scroll    int
 }
+
+const diskViewportHeight = 8
 
 // NewDiskModel creates the disk selection screen with detected disks.
 func NewDiskModel(config *model.Config) DiskModel {
@@ -27,14 +31,12 @@ func NewDiskModel(config *model.Config) DiskModel {
 		cursor:    0,
 		disks:     disks,
 		diskSizes: sizes,
+		subStep:   0,
 	}
 }
 
-// detectDisks probes the system for available block devices and their sizes.
 func detectDisks() ([]string, map[string]string) {
-	diskSizes := make(map[string]string)
-
-	// Try lsblk first (Linux) with size column
+	sizes := make(map[string]string)
 	out, err := exec.Command("lsblk", "-d", "-o", "NAME,SIZE", "-n").Output()
 	if err == nil {
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -42,19 +44,16 @@ func detectDisks() ([]string, map[string]string) {
 		for _, line := range lines {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
-				name := fields[0]
-				size := fields[1]
+				name, size := fields[0], fields[1]
 				device := "/dev/" + name
 				disks = append(disks, device)
-				diskSizes[device] = size
+				sizes[device] = size
 			}
 		}
 		if len(disks) > 0 {
-			return disks, diskSizes
+			return disks, sizes
 		}
 	}
-
-	// Try /proc/partitions (Linux)
 	out, err = exec.Command("cat", "/proc/partitions").Output()
 	if err == nil {
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -63,49 +62,22 @@ func detectDisks() ([]string, map[string]string) {
 			fields := strings.Fields(line)
 			if len(fields) == 4 {
 				name := fields[3]
-				sizeKB := fields[2] // size in 1K blocks
-				isDisk := false
-				if strings.HasPrefix(name, "sd") && len(name) == 3 {
-					isDisk = true
-				} else if strings.HasPrefix(name, "nvme") && strings.Contains(name, "n") && !strings.Contains(name[5:], "p") {
-					isDisk = true
-				} else if strings.HasPrefix(name, "vd") && len(name) == 3 {
-					isDisk = true
-				} else if strings.HasPrefix(name, "mmcblk") && !strings.Contains(name, "p") {
-					isDisk = true
-				}
+				isDisk := (strings.HasPrefix(name, "sd") && len(name) == 3) ||
+					(strings.HasPrefix(name, "nvme") && strings.Contains(name, "n") && !strings.Contains(name[5:], "p")) ||
+					(strings.HasPrefix(name, "vd") && len(name) == 3) ||
+					(strings.HasPrefix(name, "mmcblk") && !strings.Contains(name, "p"))
 				if isDisk {
 					device := "/dev/" + name
 					disks = append(disks, device)
-					// Convert KB to human-readable
-					diskSizes[device] = formatSize(sizeKB)
+					sizes[device] = fields[2] + "K"
 				}
 			}
 		}
 		if len(disks) > 0 {
-			return disks, diskSizes
+			return disks, sizes
 		}
 	}
-
-	// Fallback
-	return []string{"/dev/sda", "/dev/sdb", "/dev/nvme0n1", "/dev/nvme1n1", "/dev/vda", "/dev/mmcblk0"}, diskSizes
-}
-
-// formatSize converts a size string in 1K blocks to human-readable format.
-func formatSize(sizeKB string) string {
-	// Parse the size KB string
-	var kb int64
-	for _, c := range sizeKB {
-		if c >= '0' && c <= '9' {
-			kb = kb*10 + int64(c-'0')
-		}
-	}
-	if kb < 1024 {
-		return fmt.Sprintf("%dK", kb)
-	} else if kb < 1024*1024 {
-		return fmt.Sprintf("%.1fM", float64(kb)/1024)
-	}
-	return fmt.Sprintf("%.1fG", float64(kb)/(1024*1024))
+	return []string{"/dev/sda", "/dev/sdb", "/dev/nvme0n1", "/dev/mmcblk0"}, sizes
 }
 
 func (m DiskModel) Init() tea.Cmd { return nil }
@@ -119,79 +91,127 @@ func (m DiskModel) Update(msg tea.Msg) (DiskModel, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < len(m.disks)-1 {
+			max := m.itemCount() - 1
+			if m.cursor < max {
 				m.cursor++
 			}
-		case "enter", " ":
-			m.config.DiskDevice = m.disks[m.cursor]
-			m.config.DiskSize = m.diskSizes[m.disks[m.cursor]]
-			m.Next = true
-		case "tab":
-			m.config.DiskDevice = m.disks[m.cursor]
-			m.config.DiskSize = m.diskSizes[m.disks[m.cursor]]
-			m.Next = true
+		case "enter":
+			m.handleSelect()
+		case "esc":
+			if m.subStep > 0 {
+				m.subStep--
+				m.cursor = 0
+			}
 		}
 	}
 	return m, nil
 }
 
-func (m DiskModel) View() string {
-	title := TitleStyle.Render("Disk Selection")
-	subtitle := SubtitleStyle.Render("Select the target disk for installation.")
+func (m *DiskModel) itemCount() int {
+	switch m.subStep {
+	case 0:
+		return len(m.disks)
+	case 1:
+		return 2 // GPT or MBR
+	case 2:
+		return 3 // Auto, Manual, or confirm
+	default:
+		return 0
+	}
+}
 
-	warning := lipgloss.NewStyle().
-		Foreground(ColorWarning).
-		Bold(true).
-		Render("⚠  WARNING: All data on the selected disk will be erased!")
+func (m *DiskModel) handleSelect() {
+	switch m.subStep {
+	case 0:
+		if m.cursor < len(m.disks) {
+			m.config.DiskDevice = m.disks[m.cursor]
+			m.config.DiskSize = m.diskSizes[m.disks[m.cursor]]
+			m.subStep = 1
+			m.cursor = 0
+		}
+	case 1:
+		if m.cursor == 0 {
+			m.config.PartitionScheme = "gpt"
+		} else {
+			m.config.PartitionScheme = "mbr"
+		}
+		m.subStep = 2
+		m.cursor = 0
+	case 2:
+		if m.cursor == 0 {
+			m.config.PartitionMode = "auto"
+			m.Next = true
+		} else if m.cursor == 1 {
+			m.config.PartitionMode = "manual"
+			m.Next = true
+		}
+		// cursor 2 = back (handled by esc)
+	}
+}
+
+func (m DiskModel) View() string {
+	title := TitleStyle.Render("Disk Configuration")
+
+	switch m.subStep {
+	case 0:
+		return m.viewDiskSelect(title)
+	case 1:
+		return m.viewPartitionScheme(title)
+	case 2:
+		return m.viewPartitionMode(title)
+	default:
+		return ""
+	}
+}
+
+func (m DiskModel) viewDiskSelect(title string) string {
+	subtitle := SubtitleStyle.Render("Select the target disk for installation.")
+	warning := lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render("⚠  All data on the selected disk will be erased!")
 
 	if len(m.disks) == 0 {
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
-			title,
-			subtitle,
-			"",
-			ErrorBox("No disks detected. Make sure you are running as root on a Linux system."),
-		)
+		return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", ErrorBox("No disks detected."))
 	}
 
 	var items string
 	for i, disk := range m.disks {
-		style := ListItemStyle
-		prefix := "  "
-		if i == m.cursor {
-			style = ListItemSelectedStyle
-			prefix = "▶ "
-		}
-		selected := ""
-		if m.config.DiskDevice == disk {
-			selected = SuccessStyle.Render(" ✓")
-		}
+		sel := m.config.DiskDevice == disk
 		size := m.diskSizes[disk]
-		sizeStr := ""
+		label := disk
 		if size != "" {
-			sizeStr = lipgloss.NewStyle().Foreground(ColorGray).Render(" [" + size + "]")
+			label += "  [" + size + "]"
 		}
-		items += style.Render(prefix+disk+sizeStr+selected) + "\n"
+		items += ListItem(i == m.cursor, sel, label) + "\n"
 	}
 
-	partitionInfo := BoxStyle.Render(
-		lipgloss.JoinVertical(
-			lipgloss.Left,
-			CheckBox(m.config.UseAutoPartitioning, "Auto partitioning (recommended)"),
-			"",
-			InfoBox("Auto partitioning creates: 512MB EFI + rest as root"),
-		),
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", warning, "", BoxStyle.Render(items))
+}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		subtitle,
-		"",
-		warning,
-		"",
-		BoxStyle.Render(items),
-		"",
-		partitionInfo,
-	)
+func (m DiskModel) viewPartitionScheme(title string) string {
+	subtitle := SubtitleStyle.Render("Choose partition table type for " + m.config.DiskDevice)
+	info := InfoBox("GPT: required for UEFI, supports 128+ partitions\nMBR: legacy, max 4 primary partitions")
+
+	var items string
+	items += ListItem(m.cursor == 0, m.config.PartitionScheme == "gpt", RadioButton(m.config.PartitionScheme == "gpt", "GPT (recommended)")) + "\n"
+	items += ListItem(m.cursor == 1, m.config.PartitionScheme == "mbr", RadioButton(m.config.PartitionScheme == "mbr", "MBR / DOS")) + "\n"
+
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", info, "", BoxStyle.Render(items))
+}
+
+func (m DiskModel) viewPartitionMode(title string) string {
+	subtitle := SubtitleStyle.Render(fmt.Sprintf("%s on %s (%s)", strings.ToUpper(m.config.PartitionScheme), m.config.DiskDevice, m.config.DiskSize))
+
+	var autoDesc string
+	if m.config.PartitionScheme == "gpt" {
+		autoDesc = "Auto: 512MB EFI + rest as root"
+	} else {
+		autoDesc = "Auto: 1MB boot + rest as root"
+	}
+
+	var items string
+	items += ListItem(m.cursor == 0, m.config.PartitionMode == "auto", RadioButton(m.config.PartitionMode == "auto", "Auto partition")) + "\n"
+	items += HelpStyle.Render("  "+autoDesc) + "\n\n"
+	items += ListItem(m.cursor == 1, m.config.PartitionMode == "manual", RadioButton(m.config.PartitionMode == "manual", "Manual (advanced)")) + "\n"
+	items += HelpStyle.Render("  Custom: set partition sizes manually") + "\n"
+
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", BoxStyle.Render(items))
 }

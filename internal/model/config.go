@@ -1,7 +1,6 @@
 package model
 
 // Config holds all user choices throughout the installation wizard.
-// It is shared by reference across all TUI screens.
 type Config struct {
 	// Keyboard
 	KeyboardLayout string
@@ -13,22 +12,26 @@ type Config struct {
 	Netmask      string
 	Gateway      string
 	DNSServers   string
-	NetworkIface string // detected interface name
+	NetworkIface string
 
 	// Mirror
 	MirrorURL     string
 	MirrorCountry string
-	CustomMirror  string // Custom mirror URL input
-	EnableArchCN  bool   // Toggle Arch Linux CN repository
-	ArchCNMirror  string // Arch Linux CN mirror URL
+	CustomMirror  string
+	EnableArchCN  bool
+	ArchCNMirror  string
 
 	// Disk
-	DiskDevice          string
-	DiskSize            string // detected size
-	UseAutoPartitioning bool
-	RootPartitionSize   string // e.g., "20G" or "100%"
-	EncryptDisk         bool
-	LVMEnabled          bool
+	DiskDevice      string
+	DiskSize        string
+	PartitionScheme string // "gpt" or "mbr"
+	PartitionMode   string // "auto" or "manual"
+	EncryptDisk     bool
+	LVMEnabled      bool
+	EfiSize         string // e.g. "512M"
+	SwapSize        string // e.g. "4G" or "" to skip
+	HomeSize        string // e.g. "50G" or "" to merge into root
+	RootSize        string // e.g. "100%" for auto remainder
 
 	// Filesystem
 	FilesystemType string // ext4, btrfs, xfs, f2fs
@@ -40,7 +43,7 @@ type Config struct {
 	// Timezone & Locale
 	TimezoneRegion string
 	TimezoneCity   string
-	Locales        []string // multiple locales supported
+	Locales        []string
 
 	// Users
 	RootPassword string
@@ -56,7 +59,7 @@ type Config struct {
 	SSHAuthorizedKeys string
 
 	// Packages
-	KernelType      string // linux, linux-lts, linux-zen, linux-hardened
+	KernelType      string
 	InstallBaseDev  bool
 	InstallDocker   bool
 	InstallNginx    bool
@@ -67,7 +70,7 @@ type Config struct {
 	InstallUfw      bool
 	InstallGit      bool
 	InstallVim      bool
-	CustomPackages  string // Space-separated extra packages
+	CustomPackages  string
 
 	// Installation state
 	InstallStarted  bool
@@ -80,25 +83,30 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		KeyboardLayout:      "us",
-		NetworkDHCP:         true,
-		Hostname:            "arch-server",
-		MirrorCountry:       "auto",
-		UseAutoPartitioning: true,
-		FilesystemType:      "ext4",
-		BootloaderType:      "grub",
-		UEFIMode:            true,
-		Locales:             []string{"en_US.UTF-8"},
-		TimezoneRegion:      "UTC",
-		TimezoneCity:        "",
-		KernelType:          "linux",
-		CreateUser:          true,
-		EnableSSH:           true,
-		SSHPort:             22,
-		AllowRootLogin:      false,
-		InstallBaseDev:      false,
-		EnableArchCN:        false,
-		ArchCNMirror:        "https://mirrors.tuna.tsinghua.edu.cn/archlinuxcn",
+		KeyboardLayout:  "us",
+		NetworkDHCP:     true,
+		Hostname:        "arch-server",
+		MirrorCountry:   "auto",
+		FilesystemType:  "ext4",
+		BootloaderType:  "grub",
+		UEFIMode:        true,
+		Locales:         []string{"en_US.UTF-8"},
+		TimezoneRegion:  "UTC",
+		TimezoneCity:    "",
+		KernelType:      "linux",
+		CreateUser:      true,
+		EnableSSH:       true,
+		SSHPort:         22,
+		AllowRootLogin:  false,
+		InstallBaseDev:  false,
+		EnableArchCN:    false,
+		ArchCNMirror:    "https://mirrors.tuna.tsinghua.edu.cn/archlinuxcn",
+		PartitionScheme: "gpt",
+		PartitionMode:   "auto",
+		EfiSize:         "512M",
+		SwapSize:        "",
+		HomeSize:        "",
+		RootSize:        "100%",
 	}
 }
 

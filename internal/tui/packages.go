@@ -17,7 +17,7 @@ type PackagesModel struct {
 type pkgOption struct {
 	name    string
 	enabled bool
-	field   string // Which config field to toggle
+	field   string
 }
 
 // NewPackagesModel creates the package selection screen.
@@ -59,15 +59,10 @@ func (m PackagesModel) Update(msg tea.Msg) (PackagesModel, tea.Cmd) {
 				m.cursor++
 			}
 		case " ":
-			// Toggle the selected package
 			pkg := &m.packages[m.cursor]
 			pkg.enabled = !pkg.enabled
 			m.applyToggle(pkg)
 		case "enter":
-			// Apply and continue
-			m.applyAll()
-			m.Next = true
-		case "tab":
 			m.applyAll()
 			m.Next = true
 		}
@@ -116,10 +111,9 @@ func (m *PackagesModel) applyAll() {
 
 func (m PackagesModel) View() string {
 	title := TitleStyle.Render("Package Selection")
-	subtitle := SubtitleStyle.Render("Select packages to install. Use SPACE to toggle, ENTER to continue.")
+	subtitle := SubtitleStyle.Render("Select packages to install. SPACE to toggle, ENTER to continue.")
 
 	var items string
-	// Group by category
 	currentCategory := ""
 	for i, pkg := range m.packages {
 		cat := ""
@@ -133,27 +127,12 @@ func (m PackagesModel) View() string {
 		default:
 			cat = " Utilities "
 		}
-
 		if cat != currentCategory {
 			currentCategory = cat
 			items += "\n" + DividerStyle.Render(cat) + "\n\n"
 		}
-
-		style := ListItemStyle
-		prefix := "  "
-		if i == m.cursor {
-			style = ListItemSelectedStyle
-			prefix = "▶ "
-		}
-		checkbox := CheckBox(pkg.enabled, "")
-		items += style.Render(prefix+checkbox+" "+pkg.name) + "\n"
+		items += ListItem(i == m.cursor, false, Checkbox(pkg.enabled, pkg.name)) + "\n"
 	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		subtitle,
-		"",
-		BoxStyle.Render(items),
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", BoxStyle.Render(items))
 }
