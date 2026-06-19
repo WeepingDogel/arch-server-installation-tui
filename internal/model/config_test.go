@@ -21,10 +21,10 @@ func TestDefaultConfig(t *testing.T) {
 		{"FilesystemType", cfg.FilesystemType, "ext4"},
 		{"BootloaderType", cfg.BootloaderType, "grub"},
 		{"UEFIMode", cfg.UEFIMode, true},
-		{"Locale", cfg.Locale, "en_US.UTF-8"},
 		{"KernelType", cfg.KernelType, "linux"},
 		{"SSHPort", cfg.SSHPort, 22},
 		{"EnableSSH", cfg.EnableSSH, true},
+		{"EnableArchCN", cfg.EnableArchCN, false},
 	}
 
 	for _, tt := range tests {
@@ -33,6 +33,11 @@ func TestDefaultConfig(t *testing.T) {
 				t.Errorf("got %v, want %v", tt.got, tt.want)
 			}
 		})
+	}
+
+	// Check Locales is a slice with the default
+	if len(cfg.Locales) != 1 || cfg.Locales[0] != "en_US.UTF-8" {
+		t.Errorf("Locales: got %v, want [en_US.UTF-8]", cfg.Locales)
 	}
 }
 
@@ -94,12 +99,10 @@ func TestDefaultConfigPointer(t *testing.T) {
 	cfg1 := DefaultConfig()
 	cfg2 := DefaultConfig()
 
-	// Configs should be independent (different pointers)
 	if cfg1 == cfg2 {
 		t.Error("DefaultConfig() returned same pointer twice")
 	}
 
-	// Modifying one should not affect the other
 	cfg1.Hostname = "server1"
 	if cfg2.Hostname == "server1" {
 		t.Error("Configs are not independent")

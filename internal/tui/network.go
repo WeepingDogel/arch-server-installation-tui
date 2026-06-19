@@ -1,28 +1,55 @@
 package tui
 
 import (
+	"os"
+
 	"github.com/WeepingDogel/arch-server-installation-tui/internal/model"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// NetworkModel handles network configuration.
+// NetworkModel handles network configuration with NIC detection.
 type NetworkModel struct {
-	config     *model.Config
-	Next       bool
-	focusIndex int
-	dhcpToggle bool // true = DHCP, false = Static
-	inputs     []textinput.Model
-	showStatic bool
+	config      *model.Config
+	Next        bool
+	focusIndex  int
+	dhcpToggle  bool
+	inputs      []textinput.Model
+	showStatic  bool
+	interfaces  []string // detected network interfaces
+	ifaceCursor int
 }
 
-// NewNetworkModel creates the network configuration screen.
+// detectNICs reads /sys/class/net for real network interfaces.
+func detectNICs() []string {
+	entries, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		// Fallback
+		return []string{"eth0", "enp0s3", "wlan0"}
+	}
+	var ifaces []string
+	for _, e := range entries {
+		name := e.Name()
+		if name != "lo" {
+			ifaces = append(ifaces, name)
+		}
+	}
+	if len(ifaces) == 0 {
+		return []string{"eth0", "enp0s3", "wlan0"}
+	}
+	return ifaces
+}
+
+// NewNetworkModel creates the network configuration screen with detected NICs.
 func NewNetworkModel(config *model.Config) NetworkModel {
+	ifaces := detectNICs()
 	m := NetworkModel{
-		config:     config,
-		dhcpToggle: true,
-		inputs:     make([]textinput.Model, 5),
+		config:      config,
+		dhcpToggle:  true,
+		interfaces:  ifaces,
+		ifaceCursor: 0,
+		inputs:      make([]textinput.Model, 5),
 	}
 
 	m.inputs[0] = newTextInput("Hostname", config.Hostname)
@@ -31,16 +58,12 @@ func NewNetworkModel(config *model.Config) NetworkModel {
 	m.inputs[3] = newTextInput("Gateway", config.Gateway)
 	m.inputs[4] = newTextInput("DNS Servers", config.DNSServers)
 
-	return m
-}
+	// Set detected interface
+	if len(ifaces) > 0 {
+		config.NetworkIface = ifaces[0]
+	}
 
-func newTextInput(placeholder, value string) textinput.Model {
-	ti := textinput.New()
-	ti.Placeholder = placeholder
-	ti.SetValue(value)
-	ti.Width = 50
-	ti.TextStyle = InputStyle
-	return ti
+	return m
 }
 
 func (m NetworkModel) Init() tea.Cmd {
@@ -57,20 +80,26 @@ func (m NetworkModel) Update(msg tea.Msg) (NetworkModel, tea.Cmd) {
 				m.updateFocus()
 			}
 			return m, nil
-
 		case "down", "j":
 			if m.showStatic && m.focusIndex < len(m.inputs)-1 {
 				m.focusIndex++
 				m.updateFocus()
-			} else if !m.showStatic && m.focusIndex < 0 {
-				m.focusIndex = 0
-				m.updateFocus()
 			}
 			return m, nil
-
-		case " ", "enter":
+		case "left":
+			if m.focusIndex == 0 && !m.showStatic && m.ifaceCursor > 0 {
+				m.ifaceCursor--
+				m.config.NetworkIface = m.interfaces[m.ifaceCursor]
+			}
+			return m, nil
+		case "right":
+			if m.focusIndex == 0 && !m.showStatic && m.ifaceCursor < len(m.interfaces)-1 {
+				m.ifaceCursor++
+				m.config.NetworkIface = m.interfaces[m.ifaceCursor]
+			}
+			return m, nil
+		case " ":
 			if m.focusIndex == 0 && !m.showStatic {
-				// Toggle DHCP when focused on the toggle area
 				m.dhcpToggle = !m.dhcpToggle
 				m.config.NetworkDHCP = m.dhcpToggle
 				m.showStatic = !m.dhcpToggle
@@ -93,13 +122,15 @@ func (m NetworkModel) Update(msg tea.Msg) (NetworkModel, tea.Cmd) {
 				m.updateFocus()
 				return m, nil
 			}
-			// Check if we're in the last input
 			if m.showStatic && m.focusIndex == len(m.inputs)-1 {
 				m.saveInputs()
 				m.Next = true
 			}
 			return m, nil
-
+		case "enter":
+			m.saveInputs()
+			m.Next = true
+			return m, nil
 		case "tab":
 			m.saveInputs()
 			m.Next = true
@@ -107,7 +138,6 @@ func (m NetworkModel) Update(msg tea.Msg) (NetworkModel, tea.Cmd) {
 		}
 	}
 
-	// Handle input updates
 	var cmd tea.Cmd
 	if m.showStatic {
 		idx := m.focusIndex
@@ -152,6 +182,20 @@ func (m NetworkModel) View() string {
 	title := TitleStyle.Render("Network Configuration")
 	subtitle := SubtitleStyle.Render("Configure network settings for your server.")
 
+	// NIC selector
+	ifaceLabel := lipgloss.NewStyle().Foreground(ColorWhite).Render("Interface: ")
+	var ifaceBtn string
+	if len(m.interfaces) > 0 {
+		ifaceBtn = lipgloss.NewStyle().
+			Background(ColorAccent).
+			Foreground(ColorWhite).
+			Bold(true).
+			Padding(0, 2).
+			Render(" " + m.interfaces[m.ifaceCursor] + " ")
+	}
+	ifaceSelector := lipgloss.JoinHorizontal(lipgloss.Center, ifaceLabel, ifaceBtn)
+	ifaceHint := HelpStyle.Render("←/→ to change interface")
+
 	// DHCP/Static toggle
 	toggleLabel := lipgloss.NewStyle().Foreground(ColorWhite).Render("Network Mode: ")
 	var toggleBtn string
@@ -170,7 +214,6 @@ func (m NetworkModel) View() string {
 			Padding(0, 2).
 			Render(" Static ")
 	}
-
 	toggle := lipgloss.JoinHorizontal(lipgloss.Center, toggleLabel, toggleBtn)
 	toggleHint := HelpStyle.Render("Press SPACE to toggle network mode")
 
@@ -180,6 +223,9 @@ func (m NetworkModel) View() string {
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
+		ifaceSelector,
+		ifaceHint,
+		"",
 		toggle,
 		toggleHint,
 		"",
