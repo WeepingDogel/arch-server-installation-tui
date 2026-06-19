@@ -56,6 +56,7 @@ The root model (`root.go`) delegates `Update`/`View` to the current step model b
 3. **Theme is global** — `theme.go` exports all Lip Gloss styles as package-level vars
 4. **No external deps beyond Bubble Tea ecosystem** — Uses only `bubbletea`, `lipgloss`, `bubbles`
 5. **Step numbering** — Steps are 1-based: 1=Welcome ... 13=Install
+6. **Always run `gofmt -w` after editing code** — Any modification to `.go` files must be followed by `gofmt -w` on all files to ensure consistent formatting. CI lint will reject unformatted code.
 
 ## Step Flow
 
@@ -67,7 +68,8 @@ The root model (`root.go`) delegates `Update`/`View` to the current step model b
 
 ## Code Style
 
-- Standard Go formatting (`gofmt`)
+- **`gofmt -w` after every edit** — Run `gofmt -w $(find . -name "*.go" -not -path "./vendor/*")` after any code change
+- Standard Go formatting (`gofmt`) enforced by CI lint
 - Error handling: validate at step transition, show errors in UI footer
 - Tests: `model/config_test.go` with table-driven tests
 - Go 1.22 minimum
