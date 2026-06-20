@@ -3,7 +3,6 @@ package installer
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
 
@@ -151,10 +150,7 @@ func streamExec(logCh chan<- string, name string, args ...string) error {
 		}
 	}()
 
-	// Wait for stderr/stdout to finish
-	_, _ = io.Copy(io.Discard, stderr)
-	_, _ = io.Copy(io.Discard, stdout)
-
+	// Wait for command to finish
 	return cmd.Wait()
 }
 
@@ -180,10 +176,11 @@ func (inst *Installer) partitionDisk(logCh chan<- string) error {
 		}
 		logCh <- "Created GPT partition table."
 
-		if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "fat32", "1M", "513M"); err != nil {
+		efiEnd := 1 + unitToMB(inst.config.EfiSize)
+		if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "fat32", "1M", fmt.Sprintf("%dM", efiEnd)); err != nil {
 			return fmt.Errorf("failed to create EFI partition: %w", err)
 		}
-		logCh <- "Created EFI partition (512MB)."
+		logCh <- fmt.Sprintf("Created EFI partition (%s).", inst.config.EfiSize)
 
 		if inst.config.UEFIMode {
 			if err := streamExec(logCh, "parted", "-s", dev, "set", "1", "esp", "on"); err != nil {
@@ -193,8 +190,8 @@ func (inst *Installer) partitionDisk(logCh chan<- string) error {
 		}
 
 		if inst.config.SwapSize != "" {
-			swapEnd := 513 + unitToMB(inst.config.SwapSize)
-			if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "linux-swap", "513M", fmt.Sprintf("%dM", swapEnd)); err != nil {
+			swapEnd := efiEnd + unitToMB(inst.config.SwapSize)
+			if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "linux-swap", fmt.Sprintf("%dM", efiEnd), fmt.Sprintf("%dM", swapEnd)); err != nil {
 				return fmt.Errorf("failed to create swap partition: %w", err)
 			}
 			logCh <- fmt.Sprintf("Created swap partition (%s).", inst.config.SwapSize)
@@ -206,7 +203,7 @@ func (inst *Installer) partitionDisk(logCh chan<- string) error {
 			return nil
 		}
 
-		if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "ext4", "513M", "100%"); err != nil {
+		if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "ext4", fmt.Sprintf("%dM", efiEnd), "100%"); err != nil {
 			return fmt.Errorf("failed to create root partition: %w", err)
 		}
 		logCh <- "Created root partition."
@@ -331,6 +328,15 @@ func (inst *Installer) mountPartitions(logCh chan<- string) error {
 
 // pacstrapBase installs the base system using pacstrap.
 func (inst *Installer) pacstrapBase(logCh chan<- string) error {
+	// Write mirrorlist before pacstrap so it's available during base install
+	if inst.config.MirrorURL != "" {
+		logCh <- "Writing mirror configuration..."
+		if err := streamExec(logCh, "sh", "-c",
+			fmt.Sprintf("echo '%s' > /etc/pacman.d/mirrorlist", inst.config.MirrorURL)); err != nil {
+			logCh <- "Warning: failed to write mirrorlist"
+		}
+	}
+
 	packages := []string{"base", "linux", "linux-firmware"}
 	if inst.config.InstallBaseDev {
 		packages = append(packages, "base-devel")
@@ -403,7 +409,13 @@ func (inst *Installer) configureLocale(logCh chan<- string) error {
 // setHostname sets the system hostname.
 func (inst *Installer) setHostname(logCh chan<- string) error {
 	logCh <- fmt.Sprintf("Setting hostname to %s...", inst.config.Hostname)
-	return inst.chrootExecStream(logCh, "sh", "-c", fmt.Sprintf("echo '%s' > /etc/hostname", inst.config.Hostname))
+	if err := inst.chrootExecStream(logCh, "sh", "-c",
+		fmt.Sprintf("echo '%s' > /etc/hostname", inst.config.Hostname)); err != nil {
+		return err
+	}
+	logCh <- "Updating /etc/hosts..."
+	return inst.chrootExecStream(logCh, "sh", "-c",
+		fmt.Sprintf("grep -q '^127.0.1.1' /etc/hosts || echo '127.0.1.1\t%s' >> /etc/hosts", inst.config.Hostname))
 }
 
 // configureNetwork sets up network configuration.
@@ -413,7 +425,62 @@ func (inst *Installer) configureNetwork(logCh chan<- string) error {
 		return err
 	}
 	logCh <- "Enabling systemd-resolved..."
-	return inst.chrootExecStream(logCh, "systemctl", "enable", "systemd-resolved")
+	if err := inst.chrootExecStream(logCh, "systemctl", "enable", "systemd-resolved"); err != nil {
+		return err
+	}
+
+	iface := inst.config.NetworkIface
+	if iface == "" {
+		iface = "eth0"
+	}
+
+	if inst.config.NetworkDHCP {
+		logCh <- "Writing DHCP network configuration..."
+		networkConf := fmt.Sprintf(`[Match]
+Name=%s
+
+[Network]
+DHCP=yes
+
+[DHCP]
+UseDNS=true
+UseRoutes=true
+`, iface)
+		if err := inst.chrootExecStream(logCh, "sh", "-c",
+			fmt.Sprintf("echo '%s' > /etc/systemd/network/20-wired.network", networkConf)); err != nil {
+			return err
+		}
+	} else {
+		logCh <- "Writing static network configuration..."
+		dnsServers := inst.config.DNSServers
+		if dnsServers == "" {
+			dnsServers = "8.8.8.8, 1.1.1.1"
+		}
+		networkConf := fmt.Sprintf(`[Match]
+Name=%s
+
+[Network]
+Address=%s/%s
+Gateway=%s
+DNS=%s
+`, iface, inst.config.IPAddress, inst.config.Netmask, inst.config.Gateway, dnsServers)
+		if err := inst.chrootExecStream(logCh, "sh", "-c",
+			fmt.Sprintf("echo '%s' > /etc/systemd/network/20-wired.network", networkConf)); err != nil {
+			return err
+		}
+
+		// Also configure systemd-resolved
+		logCh <- "Configuring systemd-resolved DNS..."
+		resolvedConf := fmt.Sprintf(`[Resolve]
+DNS=%s
+FallbackDNS=8.8.8.8 1.1.1.1
+`, dnsServers)
+		if err := inst.chrootExecStream(logCh, "sh", "-c",
+			fmt.Sprintf("echo '%s' > /etc/systemd/resolved.conf", resolvedConf)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // setRootPassword sets the root password.
@@ -502,8 +569,30 @@ func (inst *Installer) configureSSH(logCh chan<- string) error {
 		rootLogin = "no"
 	}
 	logCh <- fmt.Sprintf("Setting PermitRootLogin to %s...", rootLogin)
-	return inst.chrootExecStream(logCh, "sed", "-i",
-		fmt.Sprintf("s/^#PermitRootLogin.*/PermitRootLogin %s/", rootLogin), "/etc/ssh/sshd_config")
+	if err := inst.chrootExecStream(logCh, "sed", "-i",
+		fmt.Sprintf("s/^#PermitRootLogin.*/PermitRootLogin %s/", rootLogin), "/etc/ssh/sshd_config"); err != nil {
+		return err
+	}
+
+	// Write authorized keys if provided
+	if inst.config.ImportSSHKeys && inst.config.SSHAuthorizedKeys != "" {
+		logCh <- "Installing SSH authorized keys..."
+		keysCmd := fmt.Sprintf("mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo '%s' > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys",
+			inst.config.SSHAuthorizedKeys)
+		if err := inst.chrootExecStream(logCh, "sh", "-c", keysCmd); err != nil {
+			return err
+		}
+		if inst.config.CreateUser && inst.config.UserName != "" {
+			userKeysCmd := fmt.Sprintf("mkdir -p /home/%s/.ssh && chmod 700 /home/%s/.ssh && echo '%s' > /home/%s/.ssh/authorized_keys && chmod 600 /home/%s/.ssh/authorized_keys && chown -R %s:%s /home/%s/.ssh",
+				inst.config.UserName, inst.config.UserName, inst.config.SSHAuthorizedKeys,
+				inst.config.UserName, inst.config.UserName,
+				inst.config.UserName, inst.config.UserName, inst.config.UserName)
+			if err := inst.chrootExecStream(logCh, "sh", "-c", userKeysCmd); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // installPackages installs additional packages.
@@ -568,11 +657,64 @@ func (inst *Installer) finalize(logCh chan<- string) error {
 		return err
 	}
 
+	// Enable selected service packages
+	if inst.config.InstallDocker {
+		logCh <- "Enabling Docker..."
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "docker"); err != nil {
+			logCh <- "Warning: failed to enable docker"
+		}
+	}
+	if inst.config.InstallNginx {
+		logCh <- "Enabling Nginx..."
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "nginx"); err != nil {
+			logCh <- "Warning: failed to enable nginx"
+		}
+	}
+	if inst.config.InstallPostgres {
+		logCh <- "Enabling PostgreSQL..."
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "postgresql"); err != nil {
+			logCh <- "Warning: failed to enable postgresql"
+		}
+	}
+	if inst.config.InstallMariaDB {
+		logCh <- "Enabling MariaDB..."
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "mariadb"); err != nil {
+			logCh <- "Warning: failed to enable mariadb"
+		}
+	}
+	if inst.config.InstallRedis {
+		logCh <- "Enabling Redis..."
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "redis"); err != nil {
+			logCh <- "Warning: failed to enable redis"
+		}
+	}
+	if inst.config.InstallFail2ban {
+		logCh <- "Enabling Fail2ban..."
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "fail2ban"); err != nil {
+			logCh <- "Warning: failed to enable fail2ban"
+		}
+	}
+
+	// Enable UFW firewall if selected
+	if inst.config.InstallUfw {
+		logCh <- "Enabling UFW firewall..."
+		if err := inst.chrootExecStream(logCh, "ufw", "enable"); err != nil {
+			logCh <- "Warning: failed to enable ufw"
+		}
+		sshPort := inst.config.SSHPort
+		if sshPort == 0 {
+			sshPort = 22
+		}
+		logCh <- fmt.Sprintf("Allowing SSH on port %d...", sshPort)
+		if err := inst.chrootExecStream(logCh, "ufw", "allow", fmt.Sprintf("%d/tcp", sshPort)); err != nil {
+			logCh <- "Warning: failed to allow SSH port in ufw"
+		}
+	}
+
 	if inst.config.EnableArchCN && inst.config.ArchCNMirror != "" {
 		logCh <- fmt.Sprintf("Adding Arch Linux CN repository from %s...", inst.config.ArchCNMirror)
-		repoLine := fmt.Sprintf("\n[archlinuxcn]\nServer = %s/$arch\n", inst.config.ArchCNMirror)
-		if err := inst.chrootExecStream(logCh, "sh", "-c",
-			fmt.Sprintf("echo '%s' >> /etc/pacman.conf", repoLine)); err != nil {
+		catCmd := fmt.Sprintf("cat >> /etc/pacman.conf << 'ARCHLINUXCN_EOF'\n[archlinuxcn]\nServer = %s/$arch\nARCHLINUXCN_EOF", inst.config.ArchCNMirror)
+		if err := inst.chrootExecStream(logCh, "sh", "-c", catCmd); err != nil {
 			return err
 		}
 	}

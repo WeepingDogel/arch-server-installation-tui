@@ -46,7 +46,7 @@ func (m WelcomeModel) View() string {
 			Checkbox(true, "64-bit (x86_64) or ARM64 processor"),
 			Checkbox(true, "At least 8GB of disk space"),
 			"",
-			SubtitleStyle.Render("Press ENTER or TAB to begin ▶"),
+			SubtitleStyle.Render("Press ENTER to begin ▶"),
 		),
 	)
 

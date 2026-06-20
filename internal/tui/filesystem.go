@@ -20,6 +20,10 @@ type fsOption struct {
 	desc string
 }
 
+func (m FilesystemModel) totalItems() int {
+	return len(m.fsTypes) + 2 // + [Next] [Back]
+}
+
 // NewFilesystemModel creates the filesystem selection screen.
 func NewFilesystemModel(config *model.Config) FilesystemModel {
 	return FilesystemModel{
@@ -45,12 +49,23 @@ func (m FilesystemModel) Update(msg tea.Msg) (FilesystemModel, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < len(m.fsTypes)-1 {
+			if m.cursor < m.totalItems()-1 {
 				m.cursor++
 			}
 		case "enter":
-			m.config.FilesystemType = m.fsTypes[m.cursor].name
-			m.Next = true
+			total := m.totalItems()
+			if m.cursor == total-2 {
+				// [Next]
+				if m.config.FilesystemType == "" {
+					m.config.FilesystemType = m.fsTypes[0].name
+				}
+				m.Next = true
+			} else if m.cursor == total-1 {
+				// [Back]
+				m.GoBack = true
+			} else if m.cursor < len(m.fsTypes) {
+				m.config.FilesystemType = m.fsTypes[m.cursor].name
+			}
 		}
 	}
 	return m, nil
@@ -58,7 +73,7 @@ func (m FilesystemModel) Update(msg tea.Msg) (FilesystemModel, tea.Cmd) {
 
 func (m FilesystemModel) View() string {
 	title := TitleStyle.Render("Filesystem Selection")
-	subtitle := SubtitleStyle.Render("Choose the filesystem type for the root partition.")
+	subtitle := SubtitleStyle.Render("↑/↓ select, ENTER on [Next] to confirm.")
 
 	var items string
 	for i, fs := range m.fsTypes {
@@ -67,11 +82,7 @@ func (m FilesystemModel) View() string {
 		items += ListItem(i == m.cursor, sel, RadioButton(sel, fs.name+desc)) + "\n"
 	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		subtitle,
-		"",
-		BoxStyle.Render(items),
-	)
+	items += "\n" + renderNavButtons(m.cursor, len(m.fsTypes), len(m.fsTypes)+1)
+
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", BoxStyle.Render(items))
 }
