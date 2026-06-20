@@ -176,8 +176,8 @@ func (inst *Installer) partitionDisk(logCh chan<- string) error {
 		}
 		logCh <- "Created GPT partition table."
 
-	efiEnd := 1 + unitToMB(inst.config.EfiSize)
-	if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "fat32", "1M", fmt.Sprintf("%dM", efiEnd)); err != nil {
+		efiEnd := 1 + unitToMB(inst.config.EfiSize)
+		if err := streamExec(logCh, "parted", "-s", dev, "mkpart", "primary", "fat32", "1M", fmt.Sprintf("%dM", efiEnd)); err != nil {
 			return fmt.Errorf("failed to create EFI partition: %w", err)
 		}
 		logCh <- fmt.Sprintf("Created EFI partition (%s).", inst.config.EfiSize)
