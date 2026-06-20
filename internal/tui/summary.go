@@ -33,14 +33,14 @@ func (m SummaryModel) Update(msg tea.Msg) (SummaryModel, tea.Cmd) {
 			m.cursor = 1 - m.cursor
 		case "enter":
 			if m.cursor == 0 {
-				m.Confirmed = true
-			} else {
 				m.Next = true
+			} else {
+				m.GoBack = true
 			}
 		case "tab":
-			m.Confirmed = true
+			m.cursor = 1 - m.cursor // toggle cursor between Confirm and Back
 		case "esc":
-			m.Next = true
+			m.GoBack = true
 		}
 	}
 	return m, nil

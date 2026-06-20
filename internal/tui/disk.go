@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"os/exec"
 	"strings"
 

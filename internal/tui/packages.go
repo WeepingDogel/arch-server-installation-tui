@@ -86,12 +86,24 @@ func (m *PackagesModel) applyToggle(pkg *pkgOption) {
 	switch pkg.field {
 	case "kernel_linux":
 		m.config.KernelType = "linux"
+		m.packages[1].enabled = false
+		m.packages[2].enabled = false
+		m.packages[3].enabled = false
 	case "kernel_lts":
 		m.config.KernelType = "linux-lts"
+		m.packages[0].enabled = false
+		m.packages[2].enabled = false
+		m.packages[3].enabled = false
 	case "kernel_zen":
 		m.config.KernelType = "linux-zen"
+		m.packages[0].enabled = false
+		m.packages[1].enabled = false
+		m.packages[3].enabled = false
 	case "kernel_hardened":
 		m.config.KernelType = "linux-hardened"
+		m.packages[0].enabled = false
+		m.packages[1].enabled = false
+		m.packages[2].enabled = false
 	case "base_devel":
 		m.config.InstallBaseDev = pkg.enabled
 	case "docker":

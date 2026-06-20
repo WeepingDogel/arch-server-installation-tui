@@ -66,9 +66,6 @@ func (m *RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
-			if m.step == TotalSteps && m.config.InstallStarted {
-				return m, nil
-			}
 			return m, tea.Quit
 
 		}
@@ -91,15 +88,8 @@ func (m *RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.keyboard = newModel
 		cmd = c
 		if m.keyboard.Next || m.keyboard.GoBack {
-			if m.keyboard.GoBack {
-				m.keyboard.GoBack = false
-				m.step--
-			} else {
-				m.keyboard.Next = false
-				if m.step < TotalSteps {
-					m.step++
-				}
-			}
+			m.handleNav(&m.keyboard.Next, &m.keyboard.GoBack)
+			return m, cmd
 		}
 	case 3:
 		newModel, c := m.network.Update(msg)

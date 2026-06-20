@@ -26,7 +26,6 @@ func NewSSHModel(config *model.Config) SSHModel {
 	}
 
 	m.inputs[0] = newTextInput("SSH Port (default: 22)", strconv.Itoa(config.SSHPort))
-	m.inputs[0].SetValue("22")
 
 	return m
 }
@@ -61,10 +60,12 @@ func (m SSHModel) Update(msg tea.Msg) (SSHModel, tea.Cmd) {
 			return m, nil
 		case "tab":
 			m.saveInputs()
-			m.Next = true
 			return m, nil
 		case "r":
 			m.config.AllowRootLogin = !m.config.AllowRootLogin
+			return m, nil
+		case "esc":
+			m.GoBack = true
 			return m, nil
 		}
 	}
