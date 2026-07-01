@@ -98,9 +98,19 @@ func (m NetworkModel) Update(msg tea.Msg) (NetworkModel, tea.Cmd) {
 			}
 			return m, nil
 		case " ":
+			// Preserve current values before toggling
+			m.saveInputs()
 			m.dhcpToggle = !m.dhcpToggle
 			m.config.NetworkDHCP = m.dhcpToggle
 			m.showStatic = !m.dhcpToggle
+			// Re-initialize static inputs with saved config values
+			if m.showStatic {
+				m.inputs[1].SetValue(m.config.IPAddress)
+				m.inputs[2].SetValue(m.config.Netmask)
+				m.inputs[3].SetValue(m.config.Gateway)
+				m.inputs[4].SetValue(m.config.DNSServers)
+			}
+			m.cursor = 0
 			m.syncInputFocus()
 			return m, nil
 		case "enter":

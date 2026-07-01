@@ -16,6 +16,7 @@ type SummaryModel struct {
 	GoBack    bool
 	Confirmed bool
 	cursor    int // 0 = Confirm, 1 = Back
+	erasureOK bool
 }
 
 // NewSummaryModel creates the summary screen.
@@ -39,6 +40,8 @@ func (m SummaryModel) Update(msg tea.Msg) (SummaryModel, tea.Cmd) {
 			}
 		case "tab":
 			m.cursor = 1 - m.cursor // toggle cursor between Confirm and Back
+		case " ":
+			m.erasureOK = !m.erasureOK
 		case "esc":
 			m.GoBack = true
 		}
@@ -138,18 +141,25 @@ func (m SummaryModel) View() string {
 		Bold(true).
 		Render("⚠  WARNING: This will erase all data on " + m.config.DiskDevice + "!")
 
+	// Erasure confirmation checkbox
+	confirmCheckbox := Checkbox(m.erasureOK, "I understand this will ERASE ALL DATA on "+m.config.DiskDevice)
+
 	var confirmBtn string
 	if m.cursor == 0 {
-		confirmBtn = ButtonStyle.Render("▶ Start Installation")
+		if m.erasureOK {
+			confirmBtn = ButtonStyle.Render("▶ Start Installation")
+		} else {
+			confirmBtn = ButtonDisabledStyle.Render("  Start Installation  ")
+		}
 	} else {
-		confirmBtn = ButtonDisabledStyle.Render("  Start Installation  ")
+		confirmBtn = BackButtonStyle.Render("  Start Installation  ")
 	}
 
 	var backBtn string
 	if m.cursor == 1 {
 		backBtn = BackButtonStyle.Render("◀ Back to Edit")
 	} else {
-		backBtn = BackButtonStyle.Render("  Back to Edit  ")
+		backBtn = ButtonDisabledStyle.Render("  Back to Edit  ")
 	}
 
 	buttons := lipgloss.JoinHorizontal(
@@ -158,6 +168,8 @@ func (m SummaryModel) View() string {
 		confirmBtn,
 	)
 
+	help := HelpStyle.Render("SPACE to confirm erasure")
+
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
@@ -165,9 +177,13 @@ func (m SummaryModel) View() string {
 		"",
 		warning,
 		"",
+		confirmCheckbox,
+		"",
 		summaryBox,
 		"",
 		buttons,
+		"",
+		help,
 	)
 }
 

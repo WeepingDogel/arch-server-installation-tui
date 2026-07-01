@@ -660,37 +660,37 @@ func (inst *Installer) finalize(logCh chan<- string) error {
 	// Enable selected service packages
 	if inst.config.InstallDocker {
 		logCh <- "Enabling Docker..."
-		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "docker"); err != nil {
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "docker"); err != nil {
 			logCh <- "Warning: failed to enable docker"
 		}
 	}
 	if inst.config.InstallNginx {
 		logCh <- "Enabling Nginx..."
-		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "nginx"); err != nil {
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "nginx"); err != nil {
 			logCh <- "Warning: failed to enable nginx"
 		}
 	}
 	if inst.config.InstallPostgres {
 		logCh <- "Enabling PostgreSQL..."
-		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "postgresql"); err != nil {
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "postgresql"); err != nil {
 			logCh <- "Warning: failed to enable postgresql"
 		}
 	}
 	if inst.config.InstallMariaDB {
 		logCh <- "Enabling MariaDB..."
-		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "mariadb"); err != nil {
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "mariadb"); err != nil {
 			logCh <- "Warning: failed to enable mariadb"
 		}
 	}
 	if inst.config.InstallRedis {
 		logCh <- "Enabling Redis..."
-		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "redis"); err != nil {
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "redis"); err != nil {
 			logCh <- "Warning: failed to enable redis"
 		}
 	}
 	if inst.config.InstallFail2ban {
 		logCh <- "Enabling Fail2ban..."
-		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "--now", "fail2ban"); err != nil {
+		if err := inst.chrootExecStream(logCh, "systemctl", "enable", "fail2ban"); err != nil {
 			logCh <- "Warning: failed to enable fail2ban"
 		}
 	}
