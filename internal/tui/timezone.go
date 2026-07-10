@@ -107,8 +107,6 @@ func (m TimezoneModel) View() string {
 	subtitle := SubtitleStyle.Render("SPACE to toggle locales, ENTER on [Next] to confirm.")
 
 	contentLen := len(m.regions) + len(m.locales)
-	totalButtons := 2
-	totalItems := contentLen + totalButtons
 
 	// Build a flat list of content items only (no dividers in the scrollable area)
 	var items string
