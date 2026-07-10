@@ -21,7 +21,8 @@ type TimezoneModel struct {
 	GoBack  bool
 }
 
-func (m TimezoneModel) totalItems() int {
+// totalContentItems returns the count of cursorable content items (regions + locales + nav).
+func (m TimezoneModel) totalContentItems() int {
 	return len(m.regions) + len(m.locales) + 2
 }
 
@@ -59,7 +60,7 @@ func toggleLocale(locales []string, locale string) []string {
 func (m TimezoneModel) Init() tea.Cmd { return nil }
 
 func (m TimezoneModel) Update(msg tea.Msg) (TimezoneModel, tea.Cmd) {
-	total := m.totalItems()
+	total := m.totalContentItems()
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -105,40 +106,50 @@ func (m TimezoneModel) View() string {
 	title := TitleStyle.Render("Timezone & Locale")
 	subtitle := SubtitleStyle.Render("SPACE to toggle locales, ENTER on [Next] to confirm.")
 
-	var allLines []string
-	allLines = append(allLines, DividerStyle.Render(" Timezone "))
-	for i, region := range m.regions {
-		sel := m.config.TimezoneRegion == region
-		allLines = append(allLines, ListItem(i == m.cursor, sel, RadioButton(sel, region)))
-	}
-	allLines = append(allLines, "", DividerStyle.Render(" Locales (SPACE to toggle) "))
-	for i, locale := range m.locales {
-		idx := i + len(m.regions)
-		checked := localeSelected(m.config.Locales, locale)
-		prefix := "☐ "
-		if checked {
-			prefix = "☑ "
-		}
-		allLines = append(allLines, ListItem(idx == m.cursor, false, prefix+locale))
-	}
-	allLines = append(allLines, "")
-	allLines = append(allLines, renderNavButtons(m.cursor, len(m.regions)+len(m.locales), len(m.regions)+len(m.locales)+1))
+	contentLen := len(m.regions) + len(m.locales)
 
-	visibleEnd := m.scroll + m.viewHeight()
-	if visibleEnd > len(allLines) {
-		visibleEnd = len(allLines)
-	}
+	// Build a flat list of content items only (no dividers in the scrollable area)
 	var items string
-	for i := m.scroll; i < visibleEnd; i++ {
-		items += allLines[i] + "\n"
+	visibleEnd := m.scroll + m.viewHeight()
+	if visibleEnd > contentLen {
+		visibleEnd = contentLen
 	}
+
+	// Track which content index each visible line corresponds to
+	for i := m.scroll; i < visibleEnd; i++ {
+		var line string
+		var isRegion = i < len(m.regions)
+
+		if isRegion {
+			region := m.regions[i]
+			sel := m.config.TimezoneRegion == region
+			line = ListItem(i == m.cursor, sel, RadioButton(sel, region))
+		} else {
+			localeIdx := i - len(m.regions)
+			locale := m.locales[localeIdx]
+			checked := localeSelected(m.config.Locales, locale)
+			prefix := "☐ "
+			if checked {
+				prefix = "☑ "
+			}
+			line = ListItem(i == m.cursor, false, prefix+locale)
+		}
+		items += line + "\n"
+	}
+
+	// Nav buttons (always visible at bottom, not scrolled)
+	items += "\n" + renderNavButtons(m.cursor, contentLen, contentLen+1)
 
 	scrollInfo := ""
-	if len(allLines) > m.viewHeight() {
+	if contentLen > m.viewHeight() {
 		scrollInfo = lipgloss.NewStyle().Foreground(ColorGray).Render(
-			fmt.Sprintf("  [%d-%d of %d]  ▼", m.scroll+1, visibleEnd, len(allLines)),
+			fmt.Sprintf("  [%d-%d of %d]  ▼", m.scroll+1, visibleEnd, contentLen),
 		)
 	}
+
+	// Show divider labels inline above the content
+	regionDivider := DividerStyle.Render(" Timezone ")
+	localeDivider := DividerStyle.Render(" Locales (SPACE to toggle) ")
 
 	summary := ""
 	if len(m.config.Locales) > 0 {
@@ -152,5 +163,5 @@ func (m TimezoneModel) View() string {
 		summary = lipgloss.NewStyle().Foreground(ColorSuccess).Render(locStr)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", scrollInfo, "", BoxStyle.MaxWidth(60).Render(items), "", summary)
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, "", scrollInfo, "", BoxStyle.MaxWidth(60).Render(regionDivider+"\n"+items+localeDivider), "", summary)
 }

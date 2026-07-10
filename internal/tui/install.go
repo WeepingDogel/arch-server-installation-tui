@@ -109,8 +109,7 @@ func (m InstallModel) Update(msg tea.Msg) (InstallModel, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.completed && (msg.String() == "enter" || msg.String() == "r") {
-			_ = exec.Command("reboot").Start()
-			return m, tea.Quit
+			return m, m.rebootCmd()
 		}
 		if m.completed && (msg.String() == "q" || msg.String() == "ctrl+c") {
 			return m, tea.Quit
@@ -118,6 +117,18 @@ func (m InstallModel) Update(msg tea.Msg) (InstallModel, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m InstallModel) rebootCmd() tea.Cmd {
+	return func() tea.Msg {
+		// Sync disks to flush all pending writes
+		_ = exec.Command("sync").Run()
+		// Unmount /mnt recursively to clean up the installed system
+		_ = exec.Command("umount", "-R", "/mnt").Run()
+		// Reboot into the newly installed system
+		_ = exec.Command("reboot").Start()
+		return nil
+	}
 }
 
 type pollMsg struct{}

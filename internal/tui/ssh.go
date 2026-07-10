@@ -60,11 +60,23 @@ func (m SSHModel) Update(msg tea.Msg) (SSHModel, tea.Cmd) {
 			return m, nil
 		case "tab":
 			m.saveInputs()
+			m.focusIndex = (m.focusIndex + 1) % len(m.inputs)
+			m.updateFocus()
+			return m, nil
+		case "shift+tab":
+			m.saveInputs()
+			if m.focusIndex > 0 {
+				m.focusIndex--
+			} else {
+				m.focusIndex = len(m.inputs) - 1
+			}
+			m.updateFocus()
 			return m, nil
 		case "r":
 			m.config.AllowRootLogin = !m.config.AllowRootLogin
 			return m, nil
 		case "esc":
+			m.saveInputs()
 			m.GoBack = true
 			return m, nil
 		}
